@@ -1,0 +1,26 @@
+---
+title: "Metabolomics preprocessing"
+author: "Homa Bazireh"
+output: html_document
+---
+
+This executable core is extracted from the original notebook with the same
+filename. It selects the identifier and metabolite columns from the provider's
+already normalized, imputed, log-transformed and standardized P500 export.
+Authorized exclusions are supplied in a private configuration file rather than
+embedded sample row numbers. The input order must match the reviewed export.
+
+Run from the repository root using `scripts/run_analysis.R`, or run
+`Rscript scripts/preprocess_omics.R metabolomics`. See `docs/preprocessing.md`
+for the distinction between the original diagnostic IQR replacement and its
+exported matrix. No extra log/z transformation or new missing-value imputation
+is performed here.
+
+```{r preprocessing}
+source(file.path(Sys.getenv("KORA_CODE_DIR"), "scripts", "preprocess_omics.R"))
+run_preprocessing("metabolomics")
+```
+
+Private outputs are `processed/Scaled.log.Trans.Metabolomics.RData` and
+`processed/Scaled.log.Trans.Metabolomics.csv`. The RData object is named
+`Scaled.log.Trans.Metabolomics`. Participant-level plots remain private.

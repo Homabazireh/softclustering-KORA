@@ -1,0 +1,1314 @@
+---
+title: "MetS proteomics regression"
+author: "Homa Bazireh"
+date: "2026-03-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  root.dir = Sys.getenv("KORA_RUN_DIR"),
+  echo = TRUE
+)
+```
+
+
+```{r}
+rm(list = ls(all.names = TRUE))
+
+setwd(Sys.getenv("KORA_RUN_DIR"))
+getwd()
+
+```
+
+
+
+#Retriving the libraries
+```{r}
+library(glmnet)
+library("nestedcv")
+library("glmnet")
+library("modeltools")
+library("archetypes")
+library("stats4")
+library("nnls")
+library("vcd")
+library(archetypes)
+library(factoextra)
+library(FactoMineR)
+library(scatterplot3d)
+library(plotly)
+library(ggplot2)
+library(ggsci)
+library(CBCgrps)
+library(pheatmap)
+library(corrplot)
+library(ggsankey)
+library(ggplot2)
+library(dplyr)
+library(ggalluvial)
+library(ggpubr)
+library(tidyr)
+library(dplyr)
+library(broom)
+library(naniar)
+library(mice)
+library(Amelia)
+library(glmnet)
+library(archetypal)
+library(corrplot)
+library(stats)
+library(rgl)  # For interactive 3D visualization
+library(fossil) #for ARI 
+library(clusterCrit)
+library(knitr)
+library(kableExtra)
+library(kohonen)
+library(fclust)
+library(fpc)
+library(dbscan)
+library(clusterSim)
+library(gridExtra)
+library(viridis)
+library(zip)
+library(ggfortify)
+library(orca)
+library(webshot)
+library(stats)
+library(bubbleHeatmap)
+library(circlize)
+library(ComplexHeatmap)
+library(patchwork)
+library(stringr)
+```
+
+
+#loading the merged data soft metabolomics 
+```{r}
+load("Merged.proteomics.Data.soft.MetS.RData")
+```
+
+1. Archetype score (outcome) ∼ protein/metabolite (exposure) + age + sex
+#how much the archetype score changes per one-unit increase in that protein, after adjusting for age and sex.
+
+2. Significant Metabolite/protein (outcome) ∼ Clinical variable (exposure)
+#linear regressions to test whether selected metabolites are associated with different clinical phenotypes.
+
+Since metabolomics panel is targeted, it may already be enriched for compounds known to be relevant to:
+
+insulin resistance, dyslipidemia,glycemic traits, inflammation
+
+So the targeted design itself increases the chance of discovering associations in this specific phenotype context.
+
+since archetypes are associated with traits like: glucose HbA1c lipids BMI waist circumference blood pressure Those are all much more directly connected to metabolic biochemistry than to broad proteome-wide biology.
+Targeted metabolomics often has cleaner quantification A targeted metabolomics platform usually gives: higher measurement precision lower technical noise more stable quantification fewer poorly measured features So even though you test fewer metabolites, those metabolites are often measured very well and are biologically selected to be informative.
+
+
+Proteomics is broader and less phenotype-focused, so many proteins may simply be irrelevant to these archetypes.
+
+Metabolites can easily produce more significant hits than proteins because:
+
+archetypes are likely more metabolically driven
+
+targeted metabolomics is often cleaner and more phenotype-relevant
+
+untargeted proteomics has more noise and more tests
+
+FDR penalizes the proteomics analysis more strongly
+
+
+#loading the as.robust metabolic 
+```{r}
+load("as.robust.Metabolic.RData")
+
+#load("Data.soft.Metabolic.RData")#Data.soft.Metabolic
+```
+
+
+
+```{r}
+a3_M <- as.robust.Metabolic[[3]]  # Extract archetype model for k = 3
+
+
+# If you want to inspect the alphas (archetype assignments)
+assignments_a3_M <- bestModel(a3_M)$alphas
+
+```
+
+
+#Renaming the assignment to the archetypes 
+```{r}
+colnames(assignments_a3_M) = c("Archetypes 1","Archetypes 2","Archetypes 3")
+```
+
+#Data cleaning of the clinical variables and normalisation
+```{r}
+Data.soft <- na.omit(Data.soft)
+dim(Data.soft)
+```
+
+
+
+##Normalising the data.soft
+
+```{r}
+Data.soft <- as.data.frame(Data.soft)
+Data.soft_subset <- Data.soft[, !(names(Data.soft) %in% c("u3n_metabBiocrP500_ff4", 
+                                                          "u3csex", 
+                                                          "u3tbmiwho", 
+                                                          "u3twhratc", 
+                                                          "u3twhoish", 
+                                                          "u3tdm110y15", 
+                                                          "u3tmsidfup"))]
+
+numeric_cols <- names(Data.soft_subset)[sapply(Data.soft_subset, is.numeric)]  # Get names of numeric columns
+#### Apply the transformation to each numeric column in the original Data.soft and then viewing the data 
+Data.soft[numeric_cols] <- lapply(Data.soft[numeric_cols], function(col) { 
+  qnorm((rank(col, na.last = "keep") - 0.5) / sum(!is.na(col)))
+})
+```
+
+
+##Checking the normalisation of Data.soft uisng histogram
+```{r}
+hist(as.matrix(Data.soft[,-c(1,3,7,9,12,15,18)]))
+```
+```{r}
+Data.soft.Metabolic <- Data.soft[Data.soft$u3tmsidfup == 1, ]
+dim(Data.soft.Metabolic)
+```
+
+
+
+```{r}
+Merged.Data.soft.MetS = cbind(Data.soft.Metabolic,assignments_a3_M)
+dim(Merged.Data.soft.MetS)
+```
+
+
+
+##Optional 
+##Defining and Identifying the archetypes based on the tresshold
+```{r}
+Extreme.archetype_indices <- which(assignments_a3_M > 0.7, arr.ind = TRUE)
+Participants.number <- data.frame(
+  Participant_Number = Extreme.archetype_indices[, 1],
+  Archetype_Number = Extreme.archetype_indices[, 2]
+)
+Merged.proteomics.Data.soft.MetS$Extreme_Archetype_Number <- NA
+for (i in 1:nrow(Participants.number)) {
+  participant_id <- Participants.number$Participant_Number[i]
+  archetype_id <- Participants.number$Archetype_Number[i]
+  
+  Merged.proteomics.Data.soft.MetS$Extreme_Archetype_Number[participant_id] <- archetype_id
+}
+mixed_etiology <- which(apply(assignments_a3_M, 1, function(x) all(x < 0.7)))
+Merged.proteomics.Data.soft.MetS$Extreme_Archetype_Number[mixed_etiology] <- "Mixed Etiology"
+```
+
+
+#Running linear regression only for the proteins (outcome are archetype and exposure : protein and covariates: adjust for age and sex)
+#how much the archetype score changes per one-unit increase in that protein, after adjusting for age and sex.
+```{r}
+clinical_vars <- Merged.proteomics.Data.soft.MetS[, c("u3talteru", "u3csex")]
+archetype_vars <- Merged.proteomics.Data.soft.MetS[, c("Archetypes 1", "Archetypes 2", "Archetypes 3")]
+protein_vars <- Merged.proteomics.Data.soft.MetS[, 32:873]
+results_list_prot <- list()
+for (prot in colnames(protein_vars)) {
+  prot_results <- list()
+  
+  for (archetype in colnames(archetype_vars)) {
+    # Build the formula: archetype ~ protein + clinical covariates
+    # Use backticks to handle spaces/special characters in column names
+    formula_str <- paste0("`", archetype, "` ~ `", prot, "` + u3talteru + u3csex")
+    model <- lm(as.formula(formula_str), data = Merged.proteomics.Data.soft.MetS)
+    
+    coefs <- summary(model)$coefficients
+    conf_intervals <- confint.default(model)
+    r2 <- summary(model)$r.squared
+    
+    # Ensure the protein is present in the coefficient table
+    if (paste0("`", prot, "`") %in% rownames(coefs)) {
+      coef_name <- paste0("`", prot, "`")
+    } else if (prot %in% rownames(coefs)) {
+      coef_name <- prot
+    } else {
+      coef_name <- NA
+    }
+    
+    if (!is.na(coef_name)) {
+      estimate <- coefs[coef_name, "Estimate"]
+      se <- coefs[coef_name, "Std. Error"]
+      p_value <- coefs[coef_name, "Pr(>|t|)"]
+      ci_lower <- conf_intervals[coef_name, 1]
+      ci_upper <- conf_intervals[coef_name, 2]
+    } else {
+      estimate <- NA
+      se <- NA
+      p_value <- NA
+      ci_lower <- NA
+      ci_upper <- NA
+    }
+    
+    prot_results[[archetype]] <- data.frame(
+      Protein = prot,
+      Archetype = archetype,
+      Estimate = estimate,
+      Std_Error = se,
+      P_value = p_value,
+      CI_Lower = ci_lower,
+      CI_Upper = ci_upper,
+      R2 = r2,
+      stringsAsFactors = FALSE
+    )
+  }
+  results_list_prot[[prot]] <- do.call(rbind, prot_results)
+}
+final_results_prot <- do.call(rbind, results_list_prot)
+final_results_prot$Adjusted_P_value <- p.adjust(final_results_prot$P_value, method = "fdr")
+write.csv(final_results_prot, paste0("Proteins_Archetype_Regression_Results_", Sys.Date(), ".csv"), row.names = FALSE)
+significant_results <- final_results_prot[final_results_prot$Adjusted_P_value < 0.05, ]
+head(significant_results[order(significant_results$Adjusted_P_value), ])
+
+range(significant_results$Estimate)
+```
+
+#filtering signifciant results based on the estimate
+```{r}
+significant_results_filtered <- significant_results[
+  abs(significant_results$Estimate) > 0.1, ]
+significant_results_filtered
+```
+
+#Changing the protein names to short form
+```{r}
+library(dplyr)
+library(stringr)
+
+final_results_prot <- final_results_prot %>%
+  mutate(
+    Protein = case_when(
+      str_detect(Protein, "\\|[A-Za-z0-9\\.]+_HUMAN") ~ str_extract(Protein, "(?<=\\|)[A-Za-z0-9\\.]+(?=_HUMAN)"),
+      str_detect(Protein, "__[A-Z0-9]+_HUMAN") ~ str_extract(Protein, "(?<=__)[A-Z0-9]+(?=_HUMAN)"),
+      TRUE ~ Protein  # If pattern doesn't match, keep full name
+    )
+  )
+write.csv(final_results_prot, paste0("Proteins_Archetype_Regression_Results_", Sys.Date(), ".csv"), row.names = FALSE)
+```
+
+
+##The significant numbers of proteins 
+```{r}
+library(dplyr)
+library(stringr)
+significant_results <- significant_results %>%
+  mutate(
+    Protein_Short = case_when(
+      str_detect(Protein, "\\|[A-Za-z0-9\\.]+_HUMAN") ~ str_extract(Protein, "(?<=\\|)[A-Za-z0-9\\.]+(?=_HUMAN)"),
+      str_detect(Protein, "__[A-Z0-9]+_HUMAN") ~ str_extract(Protein, "(?<=__)[A-Z0-9]+(?=_HUMAN)"),
+      TRUE ~ Protein  # If pattern doesn't match, keep full name
+    )
+  )
+
+# Optional: View the extracted short protein names
+head(significant_results$Protein_Short)
+csv_filename <- paste0("significant_proteins_extracted_", Sys.Date(), ".csv")
+write.csv(significant_results, csv_filename, row.names = FALSE)
+
+################################
+proteins_by_archetype <- significant_results %>%
+  group_by(Archetype) %>%
+  summarise(
+    Significant_Proteins = paste(unique(Protein_Short), collapse = "; "),
+    Protein_Count = n_distinct(Protein_Short)
+  ) %>%
+  arrange(Archetype)
+
+proteins_by_archetype
+View(proteins_by_archetype)
+csv_filename <- paste0("proteins_by_archetype_", Sys.Date(), ".csv")
+write.csv(proteins_by_archetype, csv_filename, row.names = FALSE)
+
+```
+
+##Significant numbers of archetypes 
+```{r}
+ table(significant_results$Archetype)
+```
+```{r}
+top10_proteins <- significant_results %>%
+  group_by(Archetype) %>%
+  arrange(Adjusted_P_value, .by_group = TRUE) %>%
+  slice_head(n = 10) %>%
+  ungroup()
+top10_proteins <- top10_proteins %>%
+  mutate(
+    Protein_Short = case_when(
+      str_detect(Protein, "\\|[A-Za-z0-9\\.]+_HUMAN") ~ str_extract(Protein, "(?<=\\|)[A-Za-z0-9\\.]+(?=_HUMAN)"),
+      str_detect(Protein, "__[A-Z0-9]+_HUMAN") ~ str_extract(Protein, "(?<=__)[A-Z0-9]+(?=_HUMAN)"),
+      TRUE ~ Protein
+    )
+  )
+top10_proteins <- top10_proteins %>%
+  group_by(Archetype) %>%
+  mutate(Protein_Short_Unique = make.unique(Protein_Short)) %>%
+  ungroup()
+
+write.csv(top10_proteins, paste0("top10_proteins_", Sys.Date(), ".csv"),
+          row.names = FALSE)
+```
+
+##Heatmap of archetypes vs top proteins
+```{r}
+library(tidyr)
+library(dplyr)
+heatmap_matrix <- top10_proteins %>%
+  dplyr::select(Protein_Short_Unique, Archetype, Estimate) %>%  # Explicit dplyr call
+  pivot_wider(names_from = Archetype, values_from = Estimate) %>%
+  as.data.frame()
+
+
+# Set short names as rownames and remove the column
+rownames(heatmap_matrix) <- heatmap_matrix$Protein_Short_Unique
+heatmap_matrix <- heatmap_matrix %>% dplyr::select(-Protein_Short_Unique)
+heatmap_matrix <- as.matrix(heatmap_matrix)
+heatmap_matrix <- type.convert(heatmap_matrix, as.is = TRUE)
+heatmap_matrix[!is.finite(heatmap_matrix)] <- 0
+max_abs_value <- max(abs(heatmap_matrix))
+color_breaks <- c(-max_abs_value, -max_abs_value/2, 0, max_abs_value/2, max_abs_value)
+col_fun <- colorRamp2(
+  breaks = color_breaks,
+  colors = c("darkblue", "dodgerblue", "#FFFDD0", "salmon", "darkred"),
+  space = "LAB"
+)
+ht <- Heatmap(
+  matrix = heatmap_matrix,
+  name = "Estimate",
+  col = col_fun,
+  
+  # Row settings - names on right
+  show_row_names = TRUE,
+  row_names_side = "right",  # Changed from "left" to "right"
+  row_names_gp = gpar(fontsize = 8, fontface = "bold"),
+  
+  # Column settings
+  show_column_names = TRUE,
+  column_names_rot = 0,
+  column_names_centered = TRUE,
+  column_names_gp = gpar(fontsize = 10),
+  
+  # Heatmap appearance
+  rect_gp = gpar(col = "gray", lwd = 0.5),
+  border = TRUE,
+  na_col = "lightgray",
+  
+  # Clustering
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  
+  # Legend settings
+  heatmap_legend_param = list(
+    title = "Estimate",
+    title_gp = gpar(fontsize = 10, fontface = "bold"),
+    labels_gp = gpar(fontsize = 7),
+    legend_height = unit(4, "cm"),
+    at = color_breaks,
+    labels = round(color_breaks, 2)
+  )
+)
+draw(ht, 
+     heatmap_legend_side = "right",
+     padding = unit(c(2, 2, 2, 10), "mm")) # Right padding increased to 10mm
+
+# Save as PNG
+png("top_proteins_heatmap2.png", 
+    width = 2000,  # Pixel dimensions
+    height = 1500, 
+    res = 300)     # 300 DPI for high quality
+draw(ht, padding = unit(c(2, 2, 2, 10), "mm"))
+dev.off()
+
+```
+
+
+
+###NOT included##
+##Run the model for the archetype ~ clinical variables (important for analysis)
+```{r}
+# Define clinical and archetype variables
+clinical_vars <- colnames(Merged.proteomics.Data.soft.MetS)[2:28]
+archetype_vars <- colnames(Merged.proteomics.Data.soft.MetS)[29:31]
+
+results_list <- list()
+
+# Loop through archetypes (outcomes)
+for (archetype in archetype_vars) {
+  archetype_results <- list()
+  
+  # Model formula: archetype ~ all clinical variables
+  formula_str <- paste0("`", archetype, "` ~ ", paste(sprintf("`%s`", clinical_vars), collapse = " + "))
+  
+  model <- lm(as.formula(formula_str), data = Merged.proteomics.Data.soft.MetS)
+  
+  coefs <- summary(model)$coefficients
+  conf_intervals <- confint.default(model)
+  r2 <- summary(model)$r.squared
+  
+  # Extract results for clinical variables only
+  for (var in clinical_vars) {
+    if (var %in% rownames(coefs)) {
+      estimate <- coefs[var, "Estimate"]
+      se <- coefs[var, "Std. Error"]
+      p_value <- coefs[var, "Pr(>|t|)"]
+      ci_lower <- conf_intervals[var, 1]
+      ci_upper <- conf_intervals[var, 2]
+    } else {
+      estimate <- NA
+      se <- NA
+      p_value <- NA
+      ci_lower <- NA
+      ci_upper <- NA
+    }
+    
+    archetype_results[[var]] <- data.frame(
+      Archetype = archetype,
+      Clinical_Variable = var,
+      Estimate = estimate,
+      Std_Error = se,
+      P_value = p_value,
+      CI_Lower = ci_lower,
+      CI_Upper = ci_upper,
+      R2 = r2,
+      stringsAsFactors = FALSE
+    )
+  }
+  results_list[[archetype]] <- do.call(rbind, archetype_results)
+}
+
+# Combine results
+final_results_clinical <- do.call(rbind, results_list)
+
+# Adjust p-values
+final_results_clinical$Adjusted_P_value <- p.adjust(final_results_clinical$P_value, method = "fdr")
+
+# Save results
+write.csv(final_results_clinical, 
+          paste0("Clinical_Archetype_Regression_Results_", Sys.Date(), ".csv"), 
+          row.names = FALSE)
+
+# Extract significant results
+significant_results_clinical <- final_results_clinical[final_results_clinical$Adjusted_P_value < 0.05, ]
+significant_results_clinical <- significant_results_clinical[order(significant_results_clinical$Adjusted_P_value), ]
+
+# View top results
+head(significant_results_clinical)
+```
+
+
+
+
+#Linear regression for dependent variable (proteins ~ clinical varibales )
+#The most discriminative omics variables were then investigated for associations with the clinical phenotypes
+```{r}
+clinical_vars <- Merged.proteomics.Data.soft.MetS[, 2:28]
+proteins_merged <- colnames(Merged.proteomics.Data.soft.MetS)[32:873]
+protein_vars <- intersect(top10_proteins$Protein, proteins_merged)
+# protein_vars <- proteins_merged
+
+protein_data <- Merged.proteomics.Data.soft.MetS[, protein_vars]
+top_protein_clinic <- cbind(clinical_vars, protein_data)
+results_list <- list()
+
+for (prot in colnames(protein_data)) {
+  for (clinical in colnames(clinical_vars)) {
+    formula_str <- paste0("`", prot, "` ~ `", clinical, "`")
+    model <- lm(as.formula(formula_str), data = top_protein_clinic)
+    coefs <- summary(model)$coefficients
+    conf_intervals <- confint.default(model)
+    r2 <- summary(model)$r.squared
+    
+    # The predictor's coefficient is always the second row
+    estimate <- coefs[2, "Estimate"]
+    se <- coefs[2, "Std. Error"]
+    p_value <- coefs[2, "Pr(>|t|)"]
+    ci_lower <- conf_intervals[2, 1]
+    ci_upper <- conf_intervals[2, 2]
+    
+    results_list[[length(results_list) + 1]] <- data.frame(
+      Protein = prot,
+      Clinical = clinical,
+      Estimate = estimate,
+      Std_Error = se,
+      P_value = p_value,
+      CI_Lower = ci_lower,
+      CI_Upper = ci_upper,
+      R2 = r2,
+      stringsAsFactors = FALSE
+    )
+  }
+}
+
+final_results <- do.call(rbind, results_list)
+final_results$Adjusted_P_value <- p.adjust(final_results$P_value, method = "fdr")
+write.csv(final_results, paste0("protein_clinical_Regression_Results_", Sys.Date(), ".csv"), row.names = FALSE)
+significant_results_protein_clinical <- final_results[final_results$Adjusted_P_value < 0.05, ]
+head(significant_results_protein_clinical[order(significant_results_protein_clinical$Adjusted_P_value), ])
+
+```
+
+
+##Renaming proteins 
+```{r}
+library(stringr)
+final_results <- final_results %>%
+  mutate(
+    Protein = case_when(
+      str_detect(Protein, "\\|[A-Za-z0-9\\.]+_HUMAN") ~ str_extract(Protein, "(?<=\\|)[A-Za-z0-9\\.]+(?=_HUMAN)"),
+      str_detect(Protein, "__[A-Z0-9]+_HUMAN") ~ str_extract(Protein, "(?<=__)[A-Z0-9]+(?=_HUMAN)"),
+      TRUE ~ Protein
+    )
+  )
+write.csv(final_results, paste0("protein_clinical_Regression_Results_", Sys.Date(), ".csv"), row.names = FALSE)
+```
+
+
+
+```{r}
+library(dplyr)
+
+final_results <- final_results %>%
+  mutate(
+    Clinical = recode(
+      Clinical,
+      "u3talteru"    = "Age",
+      "u3csex"       = "Gender",
+      "u3tgewi"      = "Weight",
+      "u3tgroe"      = "Height",
+      "u3tbmi"       = "BMI",
+      "u3tbmiwho"    = "WHO_BMI_Category",
+      "u3twhrat"     = "WHR",
+      "u3twhratc"    = "WHR_Category",
+      "u3tsysmm"     = "SBP",
+      "u3tdiamm"     = "DBP",
+      "u3twhoish"    = "Hypertension",
+      "u3tglukfastn" = "Fasting_glucose",
+      "u3tgluk2n"    = "Glucose_2h",
+      "u3tdm110y15"  = "Diabetes_WHO",
+      "u3tinsfastn"  = "Fasting_serum_insulin",
+      "u3tins2n"     = "Insulin_2h",
+      "u3tmsidfup"   = "Metabolic_Syndrome_IDF",
+      "u3thoma2_b"   = "HOMA_Beta",
+      "u3thoma2_s"   = "HOMA_Sensitivity",
+      "u3thoma2_ir"  = "HOMA_IR",
+      "u3tquickin"   = "Insulin_Sensitivity_Quicki",
+      "u3lk_choln"   = "Cholesterol",
+      "u3lk_hdln"    = "HDL",
+      "u3lk_ldln"    = "LDL",
+      "u3lk_trin"    = "TG",
+      "u3lk_krean"   = "Creatinine",
+      "u3l_hbavn"    = "HbA1c",
+      "u3h_crp"      = "hsCRP",
+      .default = Clinical
+    )
+  )
+
+write.csv(
+  final_results,
+  paste0("protein_clinical_Regression_Results_", Sys.Date(), ".csv"),
+  row.names = FALSE
+)
+```
+
+
+##Bubble plot for the clinical variables vs proteins
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+significant_results_protein_clinical <- significant_results_protein_clinical %>%
+  group_by(Clinical) %>%
+  arrange(Adjusted_P_value, .by_group = TRUE) %>%
+  slice_head(n = 10) %>%
+  ungroup()
+significant_results_protein_clinical <- significant_results_protein_clinical %>%
+  mutate(
+    Protein_Short = case_when(
+      str_detect(Protein, "\\|[A-Za-z0-9\\.]+_HUMAN") ~ str_extract(Protein, "(?<=\\|)[A-Za-z0-9\\.]+(?=_HUMAN)"),
+      str_detect(Protein, "__[A-Z0-9]+_HUMAN") ~ str_extract(Protein, "(?<=__)[A-Z0-9]+(?=_HUMAN)"),
+      TRUE ~ Protein
+    )
+  )
+significant_results_protein_clinical <- significant_results_protein_clinical %>%
+  group_by(Clinical) %>%
+  mutate(Protein_Short_Unique = make.unique(Protein_Short)) %>%
+  ungroup()
+significant_results_protein_clinical <- significant_results_protein_clinical %>%
+  mutate(
+    neg_log10_p = -log10(Adjusted_P_value)
+  )
+
+significant_results_protein_clinical <- significant_results_protein_clinical %>%
+  mutate(
+    Clinical = recode(
+      Clinical,
+      "u3talteru" = "Age",
+      "u3csex" = "Gender",
+      "u3tgewi" = "Weight",
+      "u3tgroe" = "Height",
+      "u3tbmi" = "BMI",
+      "u3tbmiwho" = "WHO_BMI_Category",
+      "u3twhrat" = "WHR",
+      "u3twhratc" = "WHR_Category",
+      "u3tsysmm" = "SBP",
+      "u3tdiamm" = "DBP",
+      "u3twhoish" = "Hypertension",
+      "u3tglukfastn" = "Fasting_glucose",
+      "u3tgluk2n" = "Glucose_2h",
+      "u3tdm110y15" = "Diabetes_WHO",
+      "u3tinsfastn" = "Fasting_serum_insulin",
+      "u3tins2n" = "Insulin_2h",
+      "u3tmsidfup" = "Metabolic_Syndrome_IDF",
+      "u3thoma2_b" = "HOMA_Beta",
+      "u3thoma2_s" = "HOMA_Sensitivity",
+      "u3thoma2_ir" = "HOMA_IR",
+      "u3tquickin" = "Insulin_Sensitivity_Quicki",
+      "u3lk_choln" = "Cholesterol",
+      "u3lk_hdln" = "HDL",
+      "u3lk_ldln" = "LDL",
+      "u3lk_trin" = "TG",
+      "u3lk_krean" = "Creatinine",
+      "u3l_hbavn" = "HbA1c",
+      "u3h_crp" = "hsCRP",
+      .default = Clinical
+    )
+  ) %>%
+  filter(!Clinical %in% c(
+    "Gender",
+    "WHO_BMI_Category",
+    "WHR_Category",
+    "Hypertension",
+    "Diabetes_WHO",
+    "Metabolic_Syndrome_IDF"
+  ))
+p <- ggplot(significant_results_protein_clinical , 
+            aes(x = Clinical, y = Protein_Short_Unique, size = neg_log10_p, color = Estimate)) +
+  geom_point() +
+  scale_color_gradient2(
+    low = "blue", mid = "white", high = "brown", midpoint = 0, name = "Effect Size"
+  ) +
+  scale_size_continuous(
+    name = "-log10",
+    range = c(3, 10)
+  ) +
+  labs(
+    title = "Top 10 Archetype-Specific Proteins",
+    x = "Phenotypes", y = "Protein"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 14, face = "bold"),
+    legend.position = "right",
+    panel.grid.major = element_line(color = "gray90"),
+    plot.title = element_text(size = 16, face = "bold")
+  )
+
+print(p)
+ggsave("clinical_Proteomics_Bubble_Plot.png", p, 
+       width = 12, height = 8, dpi = 300, bg = "white")
+```
+
+
+##Another code for Venn digram 
+```{r}
+library(VennDiagram)
+
+# Extract proteins for each archetype
+list1 <- significant_results$Protein[significant_results$Archetype == "Archetypes 1"]
+list2 <- significant_results$Protein[significant_results$Archetype == "Archetypes 2"]
+list3 <- significant_results$Protein[significant_results$Archetype == "Archetypes 3"]
+list4 <- significant_results$Protein[significant_results$Archetype == "Archetypes 4"]
+
+venn_data <- list(
+  "Arch 1" = list1,
+  "Arch 2" = list2,
+  "Arch 3" = list3,
+  "Arch 4" = list4
+)
+
+venn.plot <- venn.diagram(
+  x = venn_data,
+  filename = NULL,
+  fill = c("#8dd3c7", "#fb8072", "#fdb462", "#80b1d3"),
+  alpha = 0.5,
+  cex = 2,#Font size for the numbers
+  cat.cex = 2.5,#Font size for category labels
+  cat.pos = 0,
+  cat.dist = 0.1,
+  margin = 0.1,
+  main = "Overlap of Archetype-Associated Proteins",
+  main.cex = 3
+)
+
+grid.newpage()
+grid.draw(venn.plot)
+
+# Save as PNG (not with ggsave)
+#grid.draw(venn.plot)
+#dev.off()
+
+#Pdf
+pdf("venn_diagram2.pdf", width = 10, height = 8, bg = "white")
+grid.draw(venn.plot)
+dev.off()
+
+overlap_1_2 <- intersect(list1, list2)
+overlap_1_3 <- intersect(list1, list3)
+overlap_1_4 <- intersect(list1, list4)
+overlap_2_4 <- intersect(list2, list4)
+overlap_2_3 <- intersect(list2, list3)
+overlap_all <- intersect(intersect(intersect(list1, list2), list3), list4)
+unique_to_1 <- setdiff(list1, c(list1, list2, list3))
+```
+```{r}
+top10_proteins <- significant_results %>%
+  group_by(Archetype) %>%
+  arrange(Adjusted_P_value, .by_group = TRUE) %>%
+  slice_head(n = 10) %>%
+  ungroup()
+top10_proteins <- top10_proteins %>%
+  mutate(
+    Protein_Short = case_when(
+      str_detect(Protein, "\\|[A-Za-z0-9\\.]+_HUMAN") ~ str_extract(Protein, "(?<=\\|)[A-Za-z0-9\\.]+(?=_HUMAN)"),
+      str_detect(Protein, "__[A-Z0-9]+_HUMAN") ~ str_extract(Protein, "(?<=__)[A-Z0-9]+(?=_HUMAN)"),
+      TRUE ~ Protein
+    )
+  )
+top10_proteins <- top10_proteins %>%
+  group_by(Archetype) %>%
+  mutate(Protein_Short_Unique = make.unique(Protein_Short)) %>%
+  ungroup()
+
+write.csv(top10_proteins, paste0("top10_proteins_", Sys.Date(), ".csv"),
+          row.names = FALSE)
+```
+
+
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ComplexHeatmap)
+library(circlize)
+library(grid)
+heatmap_matrix <- top10_proteins %>%
+  dplyr::select(Protein_Short_Unique, Archetype, Estimate) %>%
+  pivot_wider(names_from = Archetype, values_from = Estimate) %>%
+  as.data.frame()
+rownames(heatmap_matrix) <- heatmap_matrix$Protein_Short_Unique
+heatmap_matrix <- heatmap_matrix %>%
+  dplyr::select(-Protein_Short_Unique)
+heatmap_matrix <- as.matrix(heatmap_matrix)
+mode(heatmap_matrix) <- "numeric"
+heatmap_matrix_clust <- heatmap_matrix
+heatmap_matrix_clust[is.na(heatmap_matrix_clust)] <- 0
+
+# Remove rows that are all NA in the original matrix, if any
+keep_rows <- rowSums(!is.na(heatmap_matrix)) > 0
+heatmap_matrix <- heatmap_matrix[keep_rows, , drop = FALSE]
+heatmap_matrix_clust <- heatmap_matrix_clust[keep_rows, , drop = FALSE]
+row_order <- hclust(dist(heatmap_matrix_clust))$order
+max_abs_value <- max(abs(heatmap_matrix), na.rm = TRUE)
+color_breaks <- c(
+  -max_abs_value,
+  -max_abs_value / 2,
+  0,
+  max_abs_value / 2,
+  max_abs_value
+)
+
+col_fun <- colorRamp2(
+  breaks = color_breaks,
+  colors = c("darkblue", "dodgerblue", "#FFFDD0", "salmon", "darkred")
+)
+ht <- Heatmap(
+  heatmap_matrix,
+  name = "Estimate",
+  col = col_fun,
+  show_row_names = TRUE,
+  row_names_side = "right",
+  row_names_gp = gpar(fontsize = 8, fontface = "bold"),
+  show_column_names = TRUE,
+  column_names_rot = 0,
+  column_names_centered = TRUE,
+  column_names_gp = gpar(fontsize = 10, fontface = "bold"),
+  rect_gp = gpar(col = "gray", lwd = 0.5),
+  border = TRUE,
+  na_col = "lightgray",
+  cluster_rows = FALSE,
+  row_order = row_order,
+  cluster_columns = FALSE,
+  heatmap_legend_param = list(
+    title = "Estimate",
+    title_gp = gpar(fontsize = 10, fontface = "bold"),
+    labels_gp = gpar(fontsize = 8),
+    legend_height = unit(4, "cm"),
+    at = color_breaks,
+    labels = round(color_breaks, 2)
+  )
+)
+
+draw(ht, heatmap_legend_side = "right",
+     padding = unit(c(2, 2, 2, 10), "mm"))
+
+# Save as PNG
+png("top_proteins_heatmap.png", 
+    width = 2000,  # Pixel dimensions
+    height = 1500, 
+    res = 300)     # 300 DPI for high quality
+draw(ht, padding = unit(c(2, 2, 2, 10), "mm"))
+dev.off()
+```
+
+
+
+#Ultimate the for combined plots of heatmap and the bubble plot
+```{r}
+# --- LIBRARIES ---
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+
+# Ensure protein and archetype order are fixed and consistent
+protein_levels <- union(
+  unique(top10_proteins$Protein_Short),
+  unique(significant_results_protein_clinical$Protein_Short_Unique)
+)
+
+archetype_levels <- unique(top10_proteins$Archetype)
+
+# --- Tile data for heatmap ---
+tile_data <- top10_proteins %>%
+  mutate(
+    Protein_Short = factor(Protein_Short, levels = rev(protein_levels)),
+    Archetype = factor(Archetype, levels = archetype_levels)
+  )
+
+# --- Significance stars column ---
+get_significance <- function(p) {
+  if (is.na(p)) return("")
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}
+
+tile_data$stars <- sapply(tile_data$Adjusted_P_value, get_significance)
+
+# --- Make a complete grid for heatmap ---
+tile_data_full <- tidyr::complete(
+  tile_data,
+  Protein_Short = protein_levels,
+  Archetype = archetype_levels,
+  fill = list(Estimate = NA, stars = "")
+)
+bubble_data <- significant_results_protein_clinical %>%
+  mutate(
+    Clinical = recode(
+      Clinical,
+      "u3talteru" = "Age",
+      "u3csex" = "Gender",
+      "u3tgewi" = "Weight",
+      "u3tgroe" = "Height",
+      "u3tbmi" = "BMI",
+      "u3tbmiwho" = "WHO_BMI_Category",
+      "u3twhrat" = "WHR",
+      "u3twhratc" = "WHR_Category",
+      "u3tsysmm" = "SBP",
+      "u3tdiamm" = "DBP",
+      "u3twhoish" = "Hypertension",
+      "u3tglukfastn" = "Fasting_glucose",
+      "u3tgluk2n" = "Glucose_2h",
+      "u3tdm110y15" = "Diabetes_WHO",
+      "u3tinsfastn" = "Fasting_serum_insulin",
+      "u3tins2n" = "Insulin_2h",
+      "u3tmsidfup" = "Metabolic_Syndrome_IDF",
+      "u3thoma2_b" = "HOMA_Beta",
+      "u3thoma2_s" = "HOMA_Sensitivity",
+      "u3thoma2_ir" = "HOMA_IR",
+      "u3tquickin" = "Insulin_Sensitivity_Quicki",
+      "u3lk_choln" = "Cholesterol",
+      "u3lk_hdln" = "HDL",
+      "u3lk_ldln" = "LDL",
+      "u3lk_trin" = "TG",
+      "u3lk_krean" = "Creatinine",
+      "u3l_hbavn" = "HbA1c",
+      "u3h_crp" = "hsCRP"
+    ),
+    Protein_Short_Unique = as.character(Protein_Short_Unique),
+    Protein_Short = Protein_Short_Unique,
+    Protein_Short = factor(Protein_Short, levels = rev(protein_levels)),
+    neg_log10_p = -log10(Adjusted_P_value)
+  ) %>%
+  filter(!Clinical %in% c(
+    "Gender",
+    "WHO_BMI_Category",
+    "WHR_Category",
+    "Hypertension",
+    "Diabetes_WHO",
+    "Metabolic_Syndrome_IDF"
+  ))
+
+# --- Full grid for bubble plot ---
+phenotype_levels <- unique(bubble_data$Clinical)
+
+bubble_data_full <- tidyr::complete(
+  bubble_data,
+  Protein_Short = protein_levels,
+  Clinical = phenotype_levels
+)
+col_fun <- colorRampPalette(c("darkblue", "dodgerblue", "#FFFDD0", "salmon", "darkred"))
+max_abs_value <- max(abs(tile_data$Estimate), na.rm = TRUE)
+color_breaks <- seq(-max_abs_value, max_abs_value, length.out = 5)
+p_heatmap <- ggplot(tile_data_full, aes(x = Archetype, y = Protein_Short, fill = Estimate)) +
+  geom_tile(color = "gray", linewidth = 0.5) +
+  scale_fill_gradientn(
+    colours = col_fun(100),
+    limits = c(-max_abs_value, max_abs_value),
+    breaks = color_breaks,
+    labels = round(color_breaks, 2),
+    name = "Estimate",
+    na.value = "white"
+  ) +
+  geom_text(aes(label = stars), size = 8, fontface = "bold", na.rm = TRUE) +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 0.5, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    legend.position = "right",
+    plot.margin = margin(0, 0, 0, 0)
+  )
+
+print(p_heatmap)
+p_bubble <- ggplot(
+  bubble_data_full,
+  aes(x = Clinical, y = Protein_Short, size = neg_log10_p, color = Estimate)
+) +
+  geom_point(na.rm = TRUE) +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "brown",
+    midpoint = 0,
+    name = "Effect Size",
+    na.value = "white"
+  ) +
+  scale_size_continuous(
+    name = "-log10(P)",
+    range = c(3, 10)
+  ) +
+  labs(
+    title = NULL,
+    x = "Phenotypes",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.y = element_blank(),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    legend.position = "right",
+    panel.grid.major = element_line(color = "gray90"),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.margin = margin(0, 0, 0, 0)
+  )
+
+print(p_bubble)
+combined <- p_heatmap + p_bubble +
+  plot_layout(nrow = 1, widths = c(0.32, 0.68))
+
+print(combined)
+ggsave(
+  "bubble_plot_only_proteins.png",
+  p_bubble,
+  width = 12,
+  height = length(protein_levels) * 0.5 + 2,
+  dpi = 600,
+  bg = "white"
+)
+
+ggsave(
+  "combined_ggplot_heatmap_bubble_proteins.png",
+  combined,
+  width = 20,
+  height = length(protein_levels) * 0.5 + 2,
+  dpi = 600,
+  bg = "white"
+)
+
+ggsave(
+  "bubble_plot_only_proteins.pdf",
+  p_bubble,
+  width = 12,
+  height = length(protein_levels) * 0.5 + 2,
+  bg = "white"
+)
+
+ggsave(
+  "combined_ggplot_heatmap_bubble_proteins.pdf",
+  plot = combined,
+  width = 18,
+  height = length(protein_levels) * 0.5 + 2,
+  bg = "white"
+)
+
+getwd()
+```
+```{r}
+# --- LIBRARIES ---
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+
+# ==============================
+# ==============================
+
+# If TRUE, non-significant heatmap cells become white
+mask_nonsig_heatmap <- FALSE
+
+# ==============================
+# ==============================
+
+# Use ONLY proteins from the heatmap as the reference list
+protein_levels <- unique(top10_proteins$Protein_Short)
+archetype_levels <- unique(top10_proteins$Archetype)
+
+# ==============================
+# ==============================
+
+get_significance <- function(p) {
+  if (is.na(p)) return("")
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  return("")
+}
+
+tile_data <- top10_proteins %>%
+  mutate(
+    stars = sapply(Adjusted_P_value, get_significance),
+    Protein_Short = factor(Protein_Short, levels = rev(protein_levels)),
+    Archetype = factor(Archetype, levels = archetype_levels)
+  )
+
+# Optional: mask non-significant cells
+if (mask_nonsig_heatmap) {
+  tile_data <- tile_data %>%
+    mutate(Estimate = ifelse(stars == "", NA, Estimate))
+}
+
+# Complete heatmap grid
+tile_data_full <- tile_data %>%
+  complete(
+    Protein_Short = factor(rev(protein_levels), levels = rev(protein_levels)),
+    Archetype = factor(archetype_levels, levels = archetype_levels),
+    fill = list(Estimate = NA, stars = "")
+  )
+
+# Recalculate color scale from CURRENT data
+max_abs_value <- max(abs(tile_data_full$Estimate), na.rm = TRUE)
+color_breaks <- seq(-max_abs_value, max_abs_value, length.out = 5)
+
+col_fun <- colorRampPalette(c("darkblue", "dodgerblue", "#FFFDD0", "salmon", "darkred"))
+
+# ==============================
+# ==============================
+
+bubble_data <- significant_results_protein_clinical %>%
+  mutate(
+    Clinical = recode(
+      Clinical,
+      "u3talteru" = "Age",
+      "u3csex" = "Gender",
+      "u3tgewi" = "Weight",
+      "u3tgroe" = "Height",
+      "u3tbmi" = "BMI",
+      "u3tbmiwho" = "WHO_BMI_Category",
+      "u3twhrat" = "WHR",
+      "u3twhratc" = "WHR_Category",
+      "u3tsysmm" = "SBP",
+      "u3tdiamm" = "DBP",
+      "u3twhoish" = "Hypertension",
+      "u3tglukfastn" = "Fasting_glucose",
+      "u3tgluk2n" = "Glucose_2h",
+      "u3tdm110y15" = "Diabetes_WHO",
+      "u3tinsfastn" = "Fasting_serum_insulin",
+      "u3tins2n" = "Insulin_2h",
+      "u3tmsidfup" = "Metabolic_Syndrome_IDF",
+      "u3thoma2_b" = "HOMA_Beta",
+      "u3thoma2_s" = "HOMA_Sensitivity",
+      "u3thoma2_ir" = "HOMA_IR",
+      "u3tquickin" = "Insulin_Sensitivity_Quicki",
+      "u3lk_choln" = "Cholesterol",
+      "u3lk_hdln" = "HDL",
+      "u3lk_ldln" = "LDL",
+      "u3lk_trin" = "TG",
+      "u3lk_krean" = "Creatinine",
+      "u3l_hbavn" = "HbA1c",
+      "u3h_crp" = "hsCRP"
+    ),
+    Protein_Short_Unique = as.character(Protein_Short_Unique),
+    neg_log10_p = -log10(Adjusted_P_value)
+  ) %>%
+  # Keep ONLY proteins that are in the heatmap
+  filter(Protein_Short_Unique %in% protein_levels) %>%
+  # Optional: remove categorical/binary phenotypes if you do not want them
+  filter(!Clinical %in% c(
+    "Gender",
+    "WHO_BMI_Category",
+    "WHR_Category",
+    "Hypertension",
+    "Diabetes_WHO",
+    "Metabolic_Syndrome_IDF"
+  )) %>%
+  mutate(
+    Protein_Short = factor(Protein_Short_Unique, levels = rev(protein_levels))
+  )
+
+# Keep phenotype order as it appears after filtering
+phenotype_levels <- unique(bubble_data$Clinical)
+
+# Complete bubble grid so rows align with heatmap
+bubble_data_full <- bubble_data %>%
+  complete(
+    Protein_Short = factor(rev(protein_levels), levels = rev(protein_levels)),
+    Clinical = phenotype_levels
+  )
+
+# ==============================
+# ==============================
+
+p_heatmap <- ggplot(tile_data_full, aes(x = Archetype, y = Protein_Short, fill = Estimate)) +
+  geom_tile(color = "gray", linewidth = 0.5) +
+  geom_text(aes(label = stars), size = 8, fontface = "bold", na.rm = TRUE) +
+  scale_fill_gradientn(
+    colours = col_fun(100),
+    limits = c(-max_abs_value, max_abs_value),
+    breaks = color_breaks,
+    labels = round(color_breaks, 2),
+    name = "Estimate",
+    na.value = "white"
+  ) +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 0.5, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    legend.position = "right",
+    plot.margin = margin(0, 0, 0, 0)
+  )
+
+print(p_heatmap)
+
+# ==============================
+# ==============================
+
+p_bubble <- ggplot(
+  bubble_data_full,
+  aes(x = Clinical, y = Protein_Short, size = neg_log10_p, color = Estimate)
+) +
+  geom_point(na.rm = TRUE) +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "brown",
+    midpoint = 0,
+    name = "Effect Size",
+    na.value = "white"
+  ) +
+  scale_size_continuous(
+    name = "-log10(P)",
+    range = c(3, 10)
+  ) +
+  labs(
+    x = "Phenotypes",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.y = element_blank(),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    legend.position = "right",
+    panel.grid.major = element_line(color = "gray90"),
+    plot.margin = margin(0, 0, 0, 0)
+  )
+
+print(p_bubble)
+
+# ==============================
+# ==============================
+
+combined <- p_heatmap + p_bubble +
+  plot_layout(nrow = 1, widths = c(0.32, 0.68))
+
+print(combined)
+
+# ==============================
+# ==============================
+
+ggsave(
+  "bubble_plot_only_proteins_MetS.png",
+  p_bubble,
+  width = 12,
+  height = length(protein_levels) * 0.5 + 2,
+  dpi = 600,
+  bg = "white"
+)
+
+ggsave(
+  "combined_ggplot_heatmap_bubble_MetS.png",
+  combined,
+  width = 18,
+  height = length(protein_levels) * 0.5 + 2,
+  dpi = 600,
+  bg = "white"
+)
+
+ggsave(
+  "bubble_plot_only_proteins_MetS.pdf",
+  p_bubble,
+  width = 12,
+  height = length(protein_levels) * 0.5 + 2,
+  bg = "white"
+)
+
+ggsave(
+  "combined_ggplot_heatmap_bubble_MetS.pdf",
+  combined,
+  width = 18,
+  height = length(protein_levels) * 0.5 + 2,
+  bg = "white"
+)
+
+getwd()
+```
+

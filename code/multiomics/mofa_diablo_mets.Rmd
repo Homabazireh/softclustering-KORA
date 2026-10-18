@@ -1,0 +1,656 @@
+---
+title: "Multi-omics integration: Clinical + Proteomics + Metabolomics (MOFA2)"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+Integrates three blocks for the the subjects shared between the
+proteomics and metabolomics datasets:
+
+- Clinical: the `mets_traits` panel (BMI, lipids, glycemic markers, etc.)
+- Proteomics: the proteins (`Merged_proteomics_Data_soft_WithMetSGroup.csv`)
+- Metabolomics: ~the metabolites (`Merged_Healthy_Mets_metabolites.RData`)
+
+MOFA2 is used rather than DIABLO because the goal here is unsupervised
+discovery of shared latent factors across the three blocks -- we then test
+post-hoc whether any factor associates with `MetS_Group`
+(Healthy/Mixed/Extreme), rather than forcing the model to optimize for that
+label directly. A DIABLO example (supervised, outcome-driven) is included
+at the end as a complementary follow-up.
+
+```{r install, eval=FALSE}
+# Run once, outside knitting
+install.packages("BiocManager")
+BiocManager::install("MOFA2")
+reticulate::py_install("mofapy2", envname = "r-reticulate")
+BiocManager::install("mixOmics")
+```
+
+## Load and align the three blocks
+
+```{r libs}
+library(MOFA2)
+```
+
+```{r params}
+id_col  <- "u3n_metabBiocrP500_ff4"
+age_col <- "u3talteru"
+sex_col <- "u3csex"
+
+# All results/plots from this script are written here, in a folder specific
+# to this RMD, so outputs from different analyses never collide.
+output_dir <- "multiomics_MOFA_DIABLO_MetS_results"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+prot  <- read.csv("proteomics_MetS_analysis_results/Merged_proteomics_Data_soft_WithMetSGroup.csv", stringsAsFactors = FALSE)
+load("merge_MetS_groups_vf_results/Merged_Metabolomics_Data_soft_WholePopulation_with_MetSGroup.RData") # loads: merged
+metab <- Merged.Metabolomics.Data.soft.WholePopulation
+
+protein_cols    <- colnames(prot)[grepl("^(sp|tr)__", colnames(prot))]
+metabolite_cols <- colnames(metab)[which(colnames(metab) == "C0"):which(colnames(metab) == "Choline")]
+
+mets_traits <- c("u3tbmi","u3twhrat","u3tsysmm","u3tdiamm",
+                  "u3tglukfastn","u3tgluk2n","u3tinsfastn",
+                  "u3thoma2_ir","u3lk_choln","u3lk_hdln","u3lk_ldln",
+                  "u3lk_trin","u3l_hbavn","u3h_crp")
+
+# Full set of clinical traits used to define the MetS extreme-search
+# subclustering (archetype decomposition), kept here as a code -> readable
+# label dictionary. mets_traits above still drives which clinical variables
+# actually go into the MOFA/DIABLO "Clinical" block; this is used purely to
+# relabel that block's feature names with human-readable trait names
+# instead of raw variable codes (see the clin_mat rownames step below).
+traits = c(
+    Age = "u3talteru",
+    Gender = "u3csex",
+    Weight = "u3tgewi",
+    Height = "u3tgroe",
+    BMI = "u3tbmi",
+    WHO_BMI_Category = "u3tbmiwho",
+    WHR = "u3twhrat",
+    WHR_Category = "u3twhratc",
+    SBP = "u3tsysmm",
+    DBP = "u3tdiamm",
+    Hypertension = "u3twhoish",
+    Fasting_glucose = "u3tglukfastn",
+    Glucose_2h = "u3tgluk2n",
+    Diabetes_WHO = "u3tdm110y15",
+    Fasting_serum_insulin = "u3tinsfastn",
+    Insulin_2h = "u3tins2n",
+    Metabolic_Syndrome_IDF = "u3tmsidfup",
+    HOMA_Beta = "u3thoma2_b",
+    HOMA_Sensitivity = "u3thoma2_s",
+    HOMA_IR = "u3thoma2_ir",
+    Insulin_Sensitivity_Quicki = "u3tquickin",
+    Cholesterol = "u3lk_choln",
+    HDL = "u3lk_hdln",
+    LDL = "u3lk_ldln",
+    TG = "u3lk_trin",
+    Creatinine = "u3lk_krean",
+    HbA1c = "u3l_hbavn",
+    hsCRP = "u3h_crp"
+  )
+trait_label_lookup <- setNames(names(traits), traits)
+
+trait_label <- function(code) {
+  lbl <- trait_label_lookup[code]
+  ifelse(is.na(lbl), code, lbl)
+}
+
+# Restrict to subjects present in BOTH omics blocks
+common_ids <- intersect(prot[[id_col]], metab[[id_col]])
+cat("Subjects with both proteomics and metabolomics:", length(common_ids), "\n")
+```
+
+```{r align}
+prot_sub  <- prot[match(common_ids, prot[[id_col]]), ]
+metab_sub <- metab[match(common_ids, metab[[id_col]]), ]
+
+stopifnot(identical(prot_sub[[id_col]], metab_sub[[id_col]]))
+```
+
+## Build MOFA input (features x samples per block)
+
+```{r build-blocks}
+clin_mat  <- t(as.matrix(metab_sub[, mets_traits]))
+prot_mat  <- t(as.matrix(prot_sub[,  protein_cols]))
+metab_mat <- t(as.matrix(metab_sub[, metabolite_cols]))
+
+# Relabel the Clinical block's feature names (currently raw variable codes,
+# This is what MOFA's plot_weights(view = "Clinical", ...) and DIABLO's
+# circosPlot()/selectVar() display, so downstream plots/tables show
+# readable trait names instead of codes.
+rownames(clin_mat) <- trait_label(rownames(clin_mat))
+
+colnames(clin_mat) <- colnames(prot_mat) <- colnames(metab_mat) <- common_ids
+
+# Standardize each block (z-score per feature) -- recommended for MOFA
+# when blocks differ wildly in scale (clinical units vs. protein intensity
+# vs. metabolite concentration)
+zscore_rows <- function(m) t(scale(t(m)))
+clin_mat  <- zscore_rows(clin_mat)
+prot_mat  <- zscore_rows(prot_mat)
+metab_mat <- zscore_rows(metab_mat)
+
+mofa_data <- list(
+  Clinical     = clin_mat,
+  Proteomics   = prot_mat,
+  Metabolomics = metab_mat
+)
+
+mofa_obj <- create_mofa(mofa_data)
+```
+
+```{r data-overview}
+plot_data_overview(mofa_obj)
+```
+
+## Train MOFA
+
+```{r mofa-options}
+data_opts  <- get_default_data_options(mofa_obj)
+model_opts <- get_default_model_options(mofa_obj)
+model_opts$num_factors <- 15
+train_opts <- get_default_training_options(mofa_obj)
+train_opts$seed <- 42
+
+mofa_obj <- prepare_mofa(mofa_obj, data_options = data_opts,
+                          model_options = model_opts,
+                          training_options = train_opts)
+```
+
+```{r mofa-train}
+mofa_trained <- run_mofa(mofa_obj, outfile = file.path(output_dir, "MetS_MOFA_model_vf.hdf5"), use_basilisk = TRUE)
+```
+
+```{r mofa-train}
+mofa_model_path <- file.path(output_dir, "MetS_MOFA_model_vf.hdf5")
+
+if (file.exists(mofa_model_path)) {
+  message("Loading pre-trained MOFA model from ", mofa_model_path)
+  mofa_trained <- load_model(mofa_model_path)
+} else {
+  message("No saved model found -- training MOFA from scratch")
+  mofa_trained <- run_mofa(mofa_obj, outfile = mofa_model_path, use_basilisk = TRUE)
+}
+```
+
+## Variance explained per block, per factor
+
+```{r variance-view-factor}
+plot_variance_explained(mofa_trained, x = "view", y = "factor")
+```
+
+```{r variance-total}
+plot_variance_explained(mofa_trained, x = "view", y = "factor", plot_total = TRUE)
+```
+```{r factors-vs-group}
+
+library(MOFA2)
+library(ggplot2)
+
+# Generate the plot
+p <- plot_variance_explained(mofa_trained, x = "view", y = "factor", plot_total = TRUE)
+
+# Define the shared theme (same sizes as your violin plot)
+big_font_theme <- theme(
+  text = element_text(size = 18),
+  axis.title = element_text(size = 20),
+  axis.text = element_text(size = 16),
+  legend.title = element_text(size = 18),
+  legend.text = element_text(size = 16),
+  plot.title = element_text(size = 22, face = "bold"),
+  strip.text = element_text(size = 16)
+)
+
+
+# Apply to both panels
+p[[1]] <- p[[1]] + big_font_theme
+p[[2]] <- p[[2]] + big_font_theme
+
+# View
+p[[1]]
+p[[2]]
+ggsave("variance_per_factor.png", plot = p[[1]], dpi = 600,
+       width = 8, height = 6, units = "in")
+
+ggsave("variance_total.png", plot = p[[2]], dpi = 600,
+       width = 6, height = 6, units = "in")
+
+
+ggsave("variance_per_factor.pdf", plot = p[[1]], dpi = 600,
+       width = 8, height = 6, units = "in")
+
+ggsave("variance_total.pdf", plot = p[[2]], dpi = 600,
+       width = 6, height = 6, units = "in")
+
+write.csv(p[[1]]$data, "variance_explained_by_factor.csv", row.names = FALSE)
+
+``` 
+
+
+
+## Link factors to MetS_Group
+
+```{r factors-vs-group}
+meta <- data.frame(
+  sample     = common_ids,
+  MetS_Group = factor(metab_sub$MetS_Group, levels = c("Healthy","Mixed","Extreme")),
+  Age        = metab_sub[[age_col]],
+  Sex        = factor(metab_sub[[sex_col]])
+)
+samples_metadata(mofa_trained) <- meta[match(samples_names(mofa_trained)[[1]], meta$sample), ]
+
+factors_df <- as.data.frame(get_factors(mofa_trained, factors = "all")[[1]])
+factors_df$MetS_Group <- samples_metadata(mofa_trained)$MetS_Group
+
+# Kruskal-Wallis test: which factors differ across Healthy/Mixed/Extreme?
+kw_p <- sapply(grep("^Factor", colnames(factors_df), value = TRUE), function(fc) {
+  kruskal.test(factors_df[[fc]] ~ factors_df$MetS_Group)$p.value
+})
+sort(kw_p)
+```
+
+```{r factor-violin}
+library(ggplot2)
+library(ggpubr)
+
+mets_colors <- c("Healthy" = "darkolivegreen2", "Mixed" = "orange", "Extreme" = "red")
+
+# Define pairwise comparisons (adjust order to match your factor levels)
+my_comparisons <- list(
+  c("Healthy", "Mixed"),
+  c("Mixed", "Extreme"),
+  c("Healthy", "Extreme")
+)
+
+factor_violin_plot = plot_factor(mofa_trained, factor = as.integer(sub("Factor", "", names(sort(kw_p))[1])),
+            color_by = "MetS_Group", add_violin = TRUE, dodge = TRUE) +
+  scale_color_manual(values = mets_colors) +
+  scale_fill_manual(values = mets_colors) +
+  stat_compare_means(comparisons = my_comparisons,
+                      method = "wilcox.test",
+                      label = "p.signif",     # shows *, **, ***, ns
+                      size = 6) +
+  stat_compare_means(method = "kruskal.test",
+                      label.y.npc = "top",
+                      size = 3) +
+  theme(
+    text = element_text(size = 16),
+    axis.title = element_text(size = 16),
+    axis.text = element_text(size = 16),
+    legend.title = element_text(size = 18),
+    legend.text = element_text(size = 12),
+    plot.title = element_text(size = 12, face = "bold"),
+    strip.text = element_text(size = 12)
+  )
+
+factor_violin_plot = factor_violin_plot +theme(strip.background = element_blank(),
+        strip.text = element_blank(),
+        panel.border = element_blank(),        # remove the box
+        axis.line = element_line(color = "black"))  # keep x/y axis lines
+
+factor_violin_plot
+
+ggsave("factor_violin_MetS_Group_stats.png", plot = factor_violin_plot,
+       width = 8, height = 6, dpi = 600)
+
+ggsave("factor_violin_MetS_Group_stats.pdf", plot = factor_violin_plot,
+       width = 8, height = 6, dpi = 600)
+```
+
+```{r factor-violin}
+library(ggplot2)
+
+mets_colors <- c("Healthy" = "darkolivegreen2", "Mixed" = "orange", "Extreme" = "red")
+
+factor_violin_plot = plot_factor(mofa_trained, factor = as.integer(sub("Factor", "", names(sort(kw_p))[3])),
+            color_by = "MetS_Group", add_violin = TRUE, dodge = TRUE) +
+  scale_color_manual(values = mets_colors) +
+  scale_fill_manual(values = mets_colors)
+
+factor_violin_plot
+
+ggsave("factor3_violin_MetS_Group.png", plot = factor_violin_plot,
+       width = 7, height = 5, dpi = 600)
+
+```
+
+## Inspect top features driving the leading factor
+
+```{r check-factor3-kw}
+sort(kw_p)
+kw_p["Factor3"]
+```
+
+```{r protein-name-cleanup}
+# Extract a clean gene/protein symbol from IDs like:
+extract_protein_name <- function(x) {
+  sapply(x, function(id) {
+    first_id <- sub("___.*$", "", id)                # drop extra "___"-joined accessions
+    parts    <- strsplit(first_id, "__", fixed = TRUE)[[1]]
+    name     <- parts[length(parts)]                 # e.g. "APOC4_HUMAN"
+    sub("_HUMAN$", "", name)                         # -> "APOC4"
+  }, USE.NAMES = FALSE)
+}
+```
+
+```{r top-factor-weights-proteomics}
+top_factor <- as.integer(sub("Factor", "", names(sort(kw_p))[1]))
+weights_prot <- get_weights(mofa_trained, views = "Proteomics", factors = top_factor)[[1]]
+
+weights_df <- data.frame(
+  feature = rownames(weights_prot),
+  weight  = weights_prot[, 1],
+  row.names = NULL
+)
+weights_df <- weights_df[order(-abs(weights_df$weight)), ]
+top_features <- head(weights_df, 10)
+top_features$protein_name <- extract_protein_name(top_features$feature)
+
+write.csv(top_features,
+          file.path(output_dir, paste0("top10_proteomics_weights_Factor", top_factor, ".csv")),
+          row.names = FALSE)
+
+write.csv(weights_df,
+          file.path(output_dir, paste0("All_proteomics_weights_Factor", top_factor, ".csv")),
+          row.names = FALSE)
+
+top_features
+```
+
+```{r top-factor-boxplots-proteomics, fig.width=12, fig.height=8}
+library(ggpubr)
+library(tidyr)
+
+# --- Pull (z-scored) expression of the top features + MetS_Group per sample ---
+prot_top_expr <- as.data.frame(t(prot_mat[top_features$feature, , drop = FALSE]))
+prot_top_expr$sample     <- rownames(prot_top_expr)
+prot_top_expr$MetS_Group <- factors_df$MetS_Group[match(prot_top_expr$sample, rownames(factors_df))]
+
+prot_top_long <- pivot_longer(prot_top_expr,
+                               cols = all_of(top_features$feature),
+                               names_to = "Protein", values_to = "Expression")
+
+# Swap in the clean protein/gene symbol for display
+prot_top_long$Protein <- extract_protein_name(prot_top_long$Protein)
+prot_top_long$Protein <- factor(prot_top_long$Protein,
+                                 levels = unique(extract_protein_name(top_features$feature)))
+
+group_comparisons <- list(c("Healthy", "Mixed"), c("Mixed", "Extreme"), c("Healthy", "Extreme"))
+
+# FIXED: underscore instead of hyphen
+top_factor_boxplots_prot <- ggplot(prot_top_long, aes(x = MetS_Group, y = Expression, fill = MetS_Group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(width = 0.15, size = 0.8, alpha = 0.4) +
+  facet_wrap(~ Protein, scales = "free_y", ncol = 5) +
+  scale_fill_manual(values = mets_colors) +
+  stat_compare_means(comparisons = group_comparisons, method = "wilcox.test",
+                      label = "p.signif", tip.length = 0.01, hide.ns = TRUE) +
+  theme_bw() +
+  theme(legend.position = "none",
+        strip.text = element_text(size = 8),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = "Z-scored protein expression",
+       title = paste0("Top ", nrow(top_features), " Proteomics features driving Factor ", top_factor))
+
+top_factor_boxplots_prot
+
+# Save the plot
+ggsave("top_factor_boxplots_prot.png",
+       plot = top_factor_boxplots_prot,
+       width = 12, height = 8, dpi = 600)
+
+
+ggsave("top_factor_boxplots_prot.pdf",
+       plot = top_factor_boxplots_prot,
+       width = 12, height = 8, dpi = 600)
+
+```
+
+
+
+```{r top-factor-weights-metabolomics}
+weights_metab <- get_weights(mofa_trained, views = "Metabolomics", factors = top_factor)[[1]]
+
+weights_metab_df <- data.frame(
+  feature = rownames(weights_metab),
+  weight  = weights_metab[, 1],
+  row.names = NULL
+)
+weights_metab_df <- weights_metab_df[order(-abs(weights_metab_df$weight)), ]
+top_features_metab <- head(weights_metab_df, 10)
+
+write.csv(top_features_metab,
+          file.path(output_dir, paste0("top10_metabolomics_weights_Factor", top_factor, ".csv")),
+          row.names = FALSE)
+
+write.csv(weights_metab_df,
+          file.path(output_dir, paste0("All_metabolomics_weights_Factor", top_factor, ".csv")),
+          row.names = FALSE)
+
+top_features_metab
+```
+
+```{r top-factor-boxplots-metabolomics, fig.width=12, fig.height=8}
+# --- Pull (z-scored) expression of the top features + MetS_Group per sample ---
+metab_top_expr <- as.data.frame(t(metab_mat[top_features_metab$feature, , drop = FALSE]))
+metab_top_expr$sample     <- rownames(metab_top_expr)
+metab_top_expr$MetS_Group <- factors_df$MetS_Group[match(metab_top_expr$sample, rownames(factors_df))]
+
+metab_top_long <- pivot_longer(metab_top_expr,
+                                cols = all_of(top_features_metab$feature),
+                                names_to = "Metabolite", values_to = "Expression")
+metab_top_long$Metabolite <- factor(metab_top_long$Metabolite, levels = top_features_metab$feature)
+
+top_factor_boxplots_metab_expr <- ggplot(metab_top_long, aes(x = MetS_Group, y = Expression, fill = MetS_Group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(width = 0.15, size = 0.8, alpha = 0.4) +
+  facet_wrap(~ Metabolite, scales = "free_y", ncol = 5) +
+  scale_fill_manual(values = mets_colors) +
+  stat_compare_means(comparisons = group_comparisons, method = "wilcox.test",
+                      label = "p.signif", tip.length = 0.01, hide.ns = TRUE) +
+  theme_bw() +
+  theme(legend.position = "none",
+        strip.text = element_text(size = 8),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = "Z-scored metabolite level",
+       title = paste0("Top ", nrow(top_features_metab), " Metabolomics features driving Factor ", top_factor))
+
+top_factor_boxplots_metab_expr
+
+# Save, scaling height to number of facet rows
+n_features_metab <- nrow(top_features_metab)
+n_rows_metab <- ceiling(n_features_metab / 5)
+
+ggsave("top_factor_boxplots_metabolomics.png",
+       plot = top_factor_boxplots_metab_expr,
+       width = 12,
+       height = 2.5 * n_rows_metab,
+       dpi = 600)
+
+
+
+ggsave("top_factor_boxplots_metabolomics.pdf",
+       plot = top_factor_boxplots_metab_expr,
+       width = 12,
+       height = 2.5 * n_rows_metab,
+       dpi = 600)
+```
+
+
+
+```{r top-factor-weights-metabolomics}
+# --- Get top features by absolute weight, split TGs from everything else ---
+weights_metab <- get_weights(mofa_trained, views = "Metabolomics", factors = top_factor)[[1]]
+
+weights_metab_df <- data.frame(
+  feature = rownames(weights_metab),
+  weight  = weights_metab[, 1],
+  row.names = NULL
+)
+weights_metab_df <- weights_metab_df[order(-abs(weights_metab_df$weight)), ]
+
+is_TG <- grepl("^TG__", weights_metab_df$feature)
+
+top5_TG    <- head(weights_metab_df[is_TG, ], 5)
+top5_other <- head(weights_metab_df[!is_TG, ], 5)
+
+# Combine and re-rank by |weight| for display order
+top_features_metab <- rbind(top5_TG, top5_other)
+top_features_metab <- top_features_metab[order(-abs(top_features_metab$weight)), ]
+
+write.csv(top_features_metab,
+          file.path(output_dir, paste0("top5TG_top5other_metabolomics_weights_Factor", top_factor, ".csv")),
+          row.names = FALSE)
+
+top_features_metab
+```
+
+
+```{r top-factor-boxplots-metabolomics, fig.width=12, fig.height=8}
+# --- Pull (z-scored) expression of the top features + MetS_Group per sample ---
+metab_top_expr <- as.data.frame(t(metab_mat[top_features_metab$feature, , drop = FALSE]))
+metab_top_expr$sample     <- rownames(metab_top_expr)
+metab_top_expr$MetS_Group <- factors_df$MetS_Group[match(metab_top_expr$sample, rownames(factors_df))]
+
+metab_top_long <- pivot_longer(metab_top_expr,
+                                cols = all_of(top_features_metab$feature),
+                                names_to = "Metabolite", values_to = "Expression")
+metab_top_long$Metabolite <- factor(metab_top_long$Metabolite, levels = top_features_metab$feature)
+
+ggplot(metab_top_long, aes(x = MetS_Group, y = Expression, fill = MetS_Group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(width = 0.15, size = 0.8, alpha = 0.4) +
+  facet_wrap(~ Metabolite, scales = "free_y", ncol = 5) +
+  scale_fill_manual(values = mets_colors) +
+  stat_compare_means(comparisons = group_comparisons, method = "wilcox.test",
+                      label = "p.signif", tip.length = 0.01, hide.ns = TRUE) +
+  theme_bw() +
+  theme(legend.position = "none",
+        strip.text = element_text(size = 8),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = "Z-scored metabolite level",
+       title = paste0("Top ", nrow(top_features_metab), " Metabolomics features driving Factor ", top_factor))
+```
+
+
+```{r top-factor-weights-clinical}
+# --- Get top clinical features by absolute weight and save to CSV ---
+weights_clin <- get_weights(mofa_trained, views = "Clinical", factors = top_factor)[[1]]
+
+weights_clin_df <- data.frame(
+  feature = rownames(weights_clin),
+  weight  = weights_clin[, 1],
+  row.names = NULL
+)
+weights_clin_df <- weights_clin_df[order(-abs(weights_clin_df$weight)), ]
+top_features_clin <- head(weights_clin_df, 10)   # only 14 traits total, so this is nearly all of them
+
+write.csv(top_features_clin,
+          file.path(output_dir, paste0("top_clinical_weights_Factor", top_factor, ".csv")),
+          row.names = FALSE)
+
+top_features_clin
+```
+
+```{r top-factor-boxplots-clinical, fig.width=12, fig.height=8}
+# --- Pull (z-scored) values of the top clinical traits + MetS_Group per sample ---
+clin_top_expr <- as.data.frame(t(clin_mat[top_features_clin$feature, , drop = FALSE]))
+clin_top_expr$sample     <- rownames(clin_top_expr)
+clin_top_expr$MetS_Group <- factors_df$MetS_Group[match(clin_top_expr$sample, rownames(factors_df))]
+
+clin_top_long <- pivot_longer(clin_top_expr,
+                               cols = all_of(top_features_clin$feature),
+                               names_to = "Trait", values_to = "Value")
+clin_top_long$Trait <- factor(clin_top_long$Trait, levels = top_features_clin$feature)
+
+ggplot(clin_top_long, aes(x = MetS_Group, y = Value, fill = MetS_Group)) +
+  geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+  geom_jitter(width = 0.15, size = 0.8, alpha = 0.4) +
+  facet_wrap(~ Trait, scales = "free_y", ncol = 5) +
+  scale_fill_manual(values = mets_colors) +
+  stat_compare_means(comparisons = group_comparisons, method = "wilcox.test",
+                      label = "p.signif", tip.length = 0.01, hide.ns = TRUE) +
+  theme_bw() +
+  theme(legend.position = "none",
+        strip.text = element_text(size = 8),
+        axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(x = NULL, y = "Z-scored clinical value",
+       title = paste0("Top ", nrow(top_features_clin), " Clinical features driving Factor ", top_factor))
+```
+
+
+ 
+
+
+
+
+
+
+
+#### STOP HERE
+
+## Complementary supervised approach: DIABLO (mixOmics)
+
+DIABLO directly maximizes correlation between the three blocks while
+separating `MetS_Group`, making it the natural follow-up once MOFA has
+identified that cross-omic structure exists, if the goal shifts to
+building an explicit multi-omic classifier/signature.
+
+```{r diablo-libs}
+library(mixOmics)
+```
+
+```{r diablo-fit}
+X <- list(
+  Clinical     = t(clin_mat),
+  Proteomics   = t(prot_mat),
+  Metabolomics = t(metab_mat)
+)
+Y <- meta$MetS_Group[match(rownames(X$Clinical), meta$sample)]
+
+diablo_design <- matrix(0.5, ncol = 3, nrow = 3,
+                         dimnames = list(names(X), names(X)))
+diag(diablo_design) <- 0
+
+# Tune number of components / variables per block before final fit
+# (keep small first run for speed; perf() and tune.block.splsda() are
+diablo_model <- block.splsda(X, Y, ncomp = 2, design = diablo_design,
+                              keepX = list(Clinical = c(10, 10),
+                                           Proteomics = c(20, 20),
+                                           Metabolomics = c(20, 20)))
+```
+
+```{r diablo-overview}
+plotDiablo(diablo_model, ncomp = 1)
+```
+
+```{r diablo-indiv}
+plotIndiv(diablo_model, legend = TRUE,
+          title = "DIABLO: Clinical + Proteomics + Metabolomics")
+```
+
+```{r diablo-circos}
+circosPlot(diablo_model, cutoff = 0.6,
+           color.blocks = c("steelblue","darkorange","firebrick"))
+```
+
+```{r diablo-selectvar-proteomics}
+selectVar(diablo_model, block = "Proteomics",   comp = 1)$Proteomics$name
+```
+
+```{r diablo-selectvar-metabolomics}
+selectVar(diablo_model, block = "Metabolomics", comp = 1)$Metabolomics$name
+```
+
+## Session info
+
+```{r session-info}
+sessionInfo()
+```

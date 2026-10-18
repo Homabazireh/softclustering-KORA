@@ -1,0 +1,25 @@
+---
+title: "Proteomics preprocessing"
+author: "Homa Bazireh"
+output: html_document
+---
+
+This executable core is extracted from the original notebook with the same
+filename. It selects FF4, replaces protein values at or outside the IQR fences
+with the feature median, retains the identifier and protein columns, and drops
+incomplete rows. It expects the original provider export layout and its upstream
+transformations. It does not add a log or z transformation.
+
+Run from the repository root using `scripts/run_analysis.R`, or run
+`Rscript scripts/preprocess_omics.R proteomics`. All inputs and outputs stay
+under the external directory specified by `KORA_PRIVATE_DIR`.
+
+```{r preprocessing}
+source(file.path(Sys.getenv("KORA_CODE_DIR"), "scripts", "preprocess_omics.R"))
+run_preprocessing("proteomics")
+```
+
+Private outputs are `processed/Scaled.log.Trans.Proteomics.RData` and
+`processed/Scaled.log.Trans.Proteomics.csv`. The RData object is named
+`Scaled.log.Trans.Proteomics`. Diagnostic plots and unrelated exploratory
+sections of the original working notebook are not executed by this core.

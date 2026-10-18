@@ -1,0 +1,627 @@
+---
+title: "Proteomics Analysis of MetS Groups (parallel to metabolomics pipeline)"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+This script mirrors the metabolomics MWAS / group-contrast / prediction
+pipeline (`code/metabolomics/mets_group_analysis.Rmd`), applied to the **proteomics** dataset
+instead. Since the Healthy/Mixed/Extreme `MetS_Group` classification was
+derived from the metabolomics archetype results, it is brought across into
+the proteomics dataset by matching on the shared ID column
+`u3n_metabBiocrP500_ff4` present in both files.
+
+Inputs:
+
+- `Merged_proteomics_Data_soft.RData` -> object `Merged.proteomics.Data.soft`
+  (private cohort, the proteins + clinical traits + the whole-population's own
+  4-archetype decomposition)
+- `Merged_Healthy_Mets_metabolites.RData` -> object `merged` (private cohort,
+  already containing `MetS_Group`, `MetS_DominantArchetype`,
+  `MetS_MaxArchetypeWeight` from the metabolomics pipeline)
+
+```{r parameters}
+path_proteomics <- "Merged.proteomics.Data.soft.RData"
+path_metab_merged <- "merge_MetS_groups_vf_results/Merged_Metabolomics_Data_soft_WholePopulation_with_MetSGroup.RData"
+
+id_col  <- "u3n_metabBiocrP500_ff4"   # shared ID column across both files
+age_col <- "u3talteru"
+sex_col <- "u3csex"
+
+# All results/plots from this script are written here, in a folder specific
+# to this RMD, so outputs from different analyses never collide.
+output_dir <- "proteomics_MetS_analysis_results"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+```
+
+## Load data and bring MetS_Group across into the proteomics dataset
+
+```{r load-merge}
+load(path_proteomics)     # loads: Merged.proteomics.Data.soft
+load(path_metab_merged)   # loads: merged  (metabolomics pipeline output)
+merged = Merged.Metabolomics.Data.soft.WholePopulation
+
+prot_raw  <- Merged.proteomics.Data.soft
+metab_grp <- merged[, c(id_col, "MetS_Group", "MetS_DominantArchetype",
+                         "MetS_MaxArchetypeWeight")]
+
+stopifnot(id_col %in% colnames(prot_raw))
+
+prot <- merge(prot_raw, metab_grp, by = id_col, all.x = TRUE)
+
+# Subjects with no metabolomics MetS classification (not in the metabolomics
+# pipeline: anyone outside the MetS extreme-search subset is Healthy)
+prot$MetS_Group <- factor(
+  ifelse(is.na(prot$MetS_Group), "Healthy", as.character(prot$MetS_Group)),
+  levels = c("Healthy", "Mixed", "Extreme")
+)
+
+cat("Proteomics subjects:", nrow(prot), "\n")
+table(prot$MetS_Group)
+cat("Matched a metabolomics MetS classification:",
+    sum(!is.na(metab_grp$MetS_Group[match(prot[[id_col]], metab_grp[[id_col]])])), "\n")
+```
+
+## Sanity checks
+
+```{r checks}
+# Every subject that was Mixed/Extreme in the metabolomics merge should
+# still be Mixed/Extreme here (no subjects gained/lost in translation),
+# allowing for the small number of IDs that don't have a proteomics match
+metab_non_healthy <- metab_grp[[id_col]][metab_grp$MetS_Group != "Healthy"]
+metab_non_healthy <- metab_non_healthy[!is.na(metab_non_healthy)]
+prot_non_healthy  <- prot[[id_col]][prot$MetS_Group != "Healthy"]
+
+stopifnot(all(metab_non_healthy %in% prot_non_healthy[!is.na(prot_non_healthy)] |
+              !(metab_non_healthy %in% prot[[id_col]])))
+
+dim(prot)
+table(prot$MetS_Group)
+str(prot[, c(id_col, "MetS_Group", "MetS_DominantArchetype", "MetS_MaxArchetypeWeight")])
+```
+
+## Save outputs
+
+```{r save}
+Merged.proteomics.Data.soft.WithMetSGroup <- prot
+
+save(
+  Merged.proteomics.Data.soft.WithMetSGroup,
+  file = file.path(output_dir, "Merged_proteomics_Data_soft_WithMetSGroup.RData")
+)
+
+write.csv(
+  prot,
+  file = file.path(output_dir, "Merged_proteomics_Data_soft_WithMetSGroup.csv"),
+  row.names = FALSE
+)
+```
+
+## Regression analysis setup
+
+```{r reg-setup}
+cols <- colnames(prot_raw)
+
+# Protein columns: everything after the clinical/archetype block, identified
+# by the sp__/tr__ UniProt-style naming convention used in this panel
+protein_cols <- cols[grepl("^(sp|tr)__", cols)]
+
+stopifnot(all(prot$u3tmsidfup %in% c(1, 2)))
+prot$MetS_case <- as.integer(prot$u3tmsidfup == 1)
+table(prot$MetS_case, prot$u3tmsidfup)
+
+mets_traits <- c("u3tgewi","u3tgroe","u3tbmi","u3twhrat","u3tsysmm","u3tdiamm",
+                 "u3tglukfastn","u3tgluk2n","u3tinsfastn","u3tins2n",
+                 "u3thoma2_b","u3thoma2_s","u3thoma2_ir","u3tquickin",
+                 "u3lk_choln","u3lk_hdln","u3lk_ldln","u3lk_trin","u3lk_krean",
+                 "u3l_hbavn","u3h_crp","MetS_case")
+stopifnot(all(mets_traits %in% colnames(prot)))
+
+length(protein_cols)  # number of proteins
+length(mets_traits)   # number of clinical traits
+
+get_term_stats <- function(fit, term) {
+  s <- summary(fit)$coefficients
+  if (!term %in% rownames(s)) return(c(beta = NA, se = NA, p = NA))
+  c(beta = s[term, 1], se = s[term, 2], p = s[term, 4])
+}
+
+# Full set of clinical traits used to define the MetS extreme-search
+# subclustering (archetype decomposition), kept here as a code -> readable
+# label dictionary. mets_traits above still drives the models actually
+# fitted below; this is used purely to relabel plots/tables with
+# human-readable trait names instead of raw variable codes.
+traits = c(
+    Age = "u3talteru",
+    Gender = "u3csex",
+    Weight = "u3tgewi",
+    Height = "u3tgroe",
+    BMI = "u3tbmi",
+    WHO_BMI_Category = "u3tbmiwho",
+    WHR = "u3twhrat",
+    WHR_Category = "u3twhratc",
+    SBP = "u3tsysmm",
+    DBP = "u3tdiamm",
+    Hypertension = "u3twhoish",
+    Fasting_glucose = "u3tglukfastn",
+    Glucose_2h = "u3tgluk2n",
+    Diabetes_WHO = "u3tdm110y15",
+    Fasting_serum_insulin = "u3tinsfastn",
+    Insulin_2h = "u3tins2n",
+    Metabolic_Syndrome_IDF = "u3tmsidfup",
+    HOMA_Beta = "u3thoma2_b",
+    HOMA_Sensitivity = "u3thoma2_s",
+    HOMA_IR = "u3thoma2_ir",
+    Insulin_Sensitivity_Quicki = "u3tquickin",
+    Cholesterol = "u3lk_choln",
+    HDL = "u3lk_hdln",
+    LDL = "u3lk_ldln",
+    TG = "u3lk_trin",
+    Creatinine = "u3lk_krean",
+    HbA1c = "u3l_hbavn",
+    hsCRP = "u3h_crp"
+  )
+trait_label_lookup <- setNames(names(traits), traits)
+trait_label_lookup["MetS_case"] <- "MetS_case"  # derived variable, not in `traits`
+
+trait_label <- function(code) {
+  lbl <- trait_label_lookup[code]
+  ifelse(is.na(lbl), code, lbl)
+}
+```
+
+For every protein x clinical trait pair, fit:
+
+`protein ~ trait + age + sex`
+
+P-values are FDR (Benjamini-Hochberg) corrected within each trait.
+
+```{r step1-pwas}
+run_pwas_continuous <- function(data, proteins, trait, age_col, sex_col, extra_covars = NULL) {
+  covars <- c(trait, age_col, sex_col, extra_covars)
+  out <- vector("list", length(proteins))
+  for (i in seq_along(proteins)) {
+    pr <- proteins[i]
+    form <- as.formula(paste0("`", pr, "` ~ ", paste(covars, collapse = " + ")))
+    fit <- lm(form, data = data)
+    st <- get_term_stats(fit, trait)
+    out[[i]] <- data.frame(protein = pr, trait = trait,
+                            beta = st["beta"], se = st["se"], p = st["p"],
+                            n = nobs(fit))
+  }
+  do.call(rbind, out)
+}
+
+pwas_list    <- lapply(mets_traits, function(tr)
+                  run_pwas_continuous(prot, protein_cols, tr, age_col, sex_col))
+pwas_results <- do.call(rbind, pwas_list)
+rownames(pwas_results) <- NULL
+
+pwas_results$q <- NA_real_
+for (tr in mets_traits) {
+  idx <- pwas_results$trait == tr
+  pwas_results$q[idx] <- p.adjust(pwas_results$p[idx], method = "BH")
+}
+
+cat("Total protein-trait tests:", nrow(pwas_results), "\n")
+cat("Significant at FDR q < 0.05:", sum(pwas_results$q < 0.05),
+    sprintf("(%.1f%%)\n", 100 * mean(pwas_results$q < 0.05)))
+
+for (tr in c("u3lk_trin", "u3lk_hdln", "u3tbmi", "u3tglukfastn", "u3h_crp", "MetS_case")) {
+  cat("\nTop hits for", trait_label(tr), "(", tr, "):\n")
+  sub <- pwas_results[pwas_results$trait == tr, ]
+  print(head(sub[order(sub$p), c("protein","beta","p","q")], 5), row.names = FALSE)
+}
+
+write.csv(pwas_results, file.path(output_dir, "step1_protein_trait_associations.csv"), row.names = FALSE)
+```
+
+```{r step1b-plot-volcano}
+library(ggplot2)
+sub <- pwas_results[pwas_results$trait %in% c("u3lk_trin","u3lk_hdln","u3tbmi","u3tglukfastn","u3h_crp","MetS_case"), ]
+
+sub$direction <- with(sub, ifelse(q >= 0.05, "Not significant",
+                            ifelse(beta > 0, "Positive (q < 0.05)", "Negative (q < 0.05)")))
+sub$direction <- factor(sub$direction,
+                         levels = c("Negative (q < 0.05)", "Not significant", "Positive (q < 0.05)"))
+
+vpall <- ggplot(sub, aes(x = beta, y = -log10(p), color = direction)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~trait, scales = "free", labeller = as_labeller(trait_label_lookup)) +
+  scale_color_manual(values = c("Negative (q < 0.05)" = "firebrick",
+                                 "Not significant"      = "grey70",
+                                 "Positive (q < 0.05)"  = "steelblue")) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  labs(color = NULL, x = "Beta", y = expression(-log[10](p)),
+       title = "Protein-trait associations") +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 12),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 13)
+  )
+
+ggsave(file.path(output_dir, "protein_volcano_plots.pdf"), plot = vpall, width = 15, height = 7)
+```
+
+For every protein, fit `protein ~ MetS_Group + age + sex` and extract each
+group's contrast vs. Healthy. FDR correction applied across all tested
+proteins, separately for each contrast.
+
+```{r step2-group}
+run_group_contrast <- function(data, features, ref_level, age_col, sex_col) {
+  d <- data
+  d$MetS_Group <- relevel(d$MetS_Group, ref = ref_level)
+  out <- vector("list", length(features))
+  for (i in seq_along(features)) {
+    ft <- features[i]
+    form <- as.formula(paste0("`", ft, "` ~ MetS_Group + ", age_col, " + ", sex_col))
+    fit <- lm(form, data = d)
+    row <- data.frame(protein = ft)
+    for (lvl in setdiff(levels(d$MetS_Group), ref_level)) {
+      term <- paste0("MetS_Group", lvl)
+      st <- get_term_stats(fit, term)
+      row[[paste0("beta_", lvl, "_vs_", ref_level)]] <- st["beta"]
+      row[[paste0("se_",   lvl, "_vs_", ref_level)]] <- st["se"]
+      row[[paste0("p_",    lvl, "_vs_", ref_level)]] <- st["p"]
+    }
+    out[[i]] <- row
+  }
+  do.call(rbind, out)
+}
+
+group_results <- run_group_contrast(prot, protein_cols, "Healthy", age_col, sex_col)
+
+group_results$q_Mixed_vs_Healthy   <- p.adjust(group_results$p_Mixed_vs_Healthy,   method = "BH")
+group_results$q_Extreme_vs_Healthy <- p.adjust(group_results$p_Extreme_vs_Healthy, method = "BH")
+
+cat("Significant (q<0.05) Mixed vs Healthy:",   sum(group_results$q_Mixed_vs_Healthy   < 0.05), "\n")
+cat("Significant (q<0.05) Extreme vs Healthy:", sum(group_results$q_Extreme_vs_Healthy < 0.05), "\n")
+
+cat("\nTop hits, Mixed vs Healthy:\n")
+print(head(group_results[order(group_results$p_Mixed_vs_Healthy),
+      c("protein","beta_Mixed_vs_Healthy","q_Mixed_vs_Healthy")], 8), row.names = FALSE)
+
+cat("\nTop hits, Extreme vs Healthy:\n")
+print(head(group_results[order(group_results$p_Extreme_vs_Healthy),
+      c("protein","beta_Extreme_vs_Healthy","q_Extreme_vs_Healthy")], 8), row.names = FALSE)
+
+write.csv(group_results, file.path(output_dir, "step2_protein_group_associations.csv"), row.names = FALSE)
+```
+
+```{r step3-overlap}
+set_MH <- group_results$protein[group_results$q_Mixed_vs_Healthy   < 0.05]
+set_EH <- group_results$protein[group_results$q_Extreme_vs_Healthy < 0.05]
+
+cat("Set sizes -> Mixed vs Healthy:", length(set_MH),
+    " | Extreme vs Healthy:", length(set_EH), "\n")
+
+n_MH_only <- length(setdiff(set_MH, set_EH))
+n_EH_only <- length(setdiff(set_EH, set_MH))
+n_both    <- length(intersect(set_MH, set_EH))
+
+cat("Exclusive to Mixed-vs-Healthy:", n_MH_only, "\n")
+cat("Exclusive to Extreme-vs-Healthy:", n_EH_only, "\n")
+cat("Shared by both:", n_both, "\n")
+
+draw_venn2 <- function(n1, n2, n12, labels = c("A", "B")) {
+  plot(0, 0, type = "n", xlim = c(-1.8, 3.0), ylim = c(-2.1, 1.3),
+       axes = FALSE, xlab = "", ylab = "", asp = 1)
+  symbols(x = c(0, 1.1), y = c(0, 0), circles = c(1, 1),
+          inches = FALSE, add = TRUE,
+          fg = c("steelblue", "firebrick"), lwd = 2.5)
+  text(-0.35, 0, n1, cex = 1.4)
+  text(1.45, 0, n2, cex = 1.4)
+  text(0.55, 0, n12, cex = 1.4, font = 2)
+  legend(x = 0.55, y = -1.3, legend = labels, col = c("steelblue", "firebrick"),
+         lwd = 2.5, bty = "n", cex = 0.95, xjust = 0.5, yjust = 1)
+}
+
+pdf(file.path(output_dir, "protein_venn_diagram.pdf"), width = 6, height = 5)
+draw_venn2(n_MH_only, n_EH_only, n_both,
+           labels = c("Mixed vs Healthy", "Extreme vs Healthy"))
+dev.off()
+```
+
+Mirrors Step 6 of the metabolomics pipeline: cross-validated logistic
+regression (base R only), comparing protein-based prediction to age+sex
+alone, across the three pairwise group comparisons.
+
+```{r step4-predict-setup}
+# Mann-Whitney based AUC (no pROC/ROCR needed)
+auc_fn <- function(prob, label) {
+  pos <- prob[label == 1]; neg <- prob[label == 0]
+  n1 <- length(pos); n0 <- length(neg)
+  r <- rank(c(pos, neg))
+  (sum(r[1:n1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
+}
+
+# k-fold stratified CV logistic regression with per-fold univariate feature screening
+run_cv_logistic <- function(data, outcome_col, pos_label, metabolites, covars,
+                             k_top = 8, n_folds = 10, seed = 1) {
+  set.seed(seed)
+  d <- data
+  y <- as.integer(d[[outcome_col]] == pos_label)
+  n <- nrow(d)
+  folds <- integer(n)
+  for (lab in unique(y)) {
+    idx <- which(y == lab)
+    folds[idx] <- sample(rep(1:n_folds, length.out = length(idx)))
+  }
+  oof_pred <- rep(NA_real_, n)
+  fold_feats <- vector("list", n_folds)
+  for (f in 1:n_folds) {
+    train_idx <- which(folds != f); test_idx <- which(folds == f)
+    train <- d[train_idx, ]; test <- d[test_idx, ]
+    ytr <- y[train_idx]
+    if (k_top > 0) {
+      pvals <- sapply(metabolites, function(mb) {
+        fit <- tryCatch(stats::glm(ytr ~ train[[mb]], family = binomial), error = function(e) NULL)
+        if (is.null(fit)) return(1)
+        s <- summary(fit)$coefficients
+        if (nrow(s) < 2) return(1)
+        s[2, 4]
+      })
+      top_feats <- names(sort(pvals))[1:min(k_top, length(pvals))]
+    } else {
+      top_feats <- character(0)
+    }
+    fold_feats[[f]] <- top_feats
+    form <- as.formula(paste("y_tr ~", paste(c(top_feats, covars), collapse = " + ")))
+    train_df <- train[, c(top_feats, covars), drop = FALSE]
+    train_df$y_tr <- ytr
+    fit <- suppressWarnings(stats::glm(form, data = train_df, family = binomial))
+    test_df <- test[, c(top_feats, covars), drop = FALSE]
+    oof_pred[test_idx] <- suppressWarnings(stats::predict.glm(fit, newdata = test_df, type = "response"))
+  }
+  list(pred = oof_pred, y = y, auc = auc_fn(oof_pred, y), fold_feats = fold_feats)
+}
+covars <- c(age_col, sex_col)
+```
+
+```{r step4-predict-run}
+em_subset <- prot[prot$MetS_Group %in% c("Mixed", "Extreme"), ]
+em_subset$MetS_Group <- factor(em_subset$MetS_Group, levels = c("Mixed", "Extreme"))
+
+eh_subset <- prot[prot$MetS_Group %in% c("Healthy", "Extreme"), ]
+eh_subset$MetS_Group <- factor(eh_subset$MetS_Group, levels = c("Healthy", "Extreme"))
+
+mh_subset <- prot[prot$MetS_Group %in% c("Healthy", "Mixed"), ]
+mh_subset$MetS_Group <- factor(mh_subset$MetS_Group, levels = c("Healthy", "Mixed"))
+
+comparisons <- list(
+  list(name = "Extreme vs Mixed",   data = em_subset, pos = "Extreme"),
+  list(name = "Extreme vs Healthy", data = eh_subset, pos = "Extreme"),
+  list(name = "Mixed vs Healthy",   data = mh_subset, pos = "Mixed")
+)
+
+pred_results <- do.call(rbind, lapply(comparisons, function(cmp) {
+  full_model <- run_cv_logistic(cmp$data, "MetS_Group", cmp$pos, protein_cols, covars, k_top = 8)
+  prot_only  <- run_cv_logistic(cmp$data, "MetS_Group", cmp$pos, protein_cols, character(0), k_top = 8)
+  baseline   <- run_cv_logistic(cmp$data, "MetS_Group", cmp$pos, protein_cols, covars, k_top = 0)
+  data.frame(
+    comparison        = cmp$name,
+    n                  = nrow(cmp$data),
+    auc_prot_age_sex   = round(full_model$auc, 3),
+    auc_prot_only      = round(prot_only$auc, 3),
+    auc_age_sex_only   = round(baseline$auc, 3)
+  )
+}))
+
+print(pred_results, row.names = FALSE)
+write.csv(pred_results, file.path(output_dir, "step4_protein_prediction_auc_summary.csv"), row.names = FALSE)
+```
+
+```{r step4-predict-plot}
+plot_df <- t(as.matrix(pred_results[, c("auc_prot_age_sex","auc_prot_only","auc_age_sex_only")]))
+colnames(plot_df) <- pred_results$comparison
+
+bp <- barplot(plot_df, beside = TRUE, ylim = c(0, 1),
+              col = c("steelblue","darkorange","grey70"),
+              legend.text = c("Proteins + age + sex","Proteins only","Age + sex only"),
+              args.legend = list(x = "top", bty = "n", cex = 0.8, horiz = TRUE),
+              ylab = "Cross-validated AUC",
+              main = "Predicting MetS group membership from proteins")
+abline(h = 0.5, lty = 2, col = "red")
+text(bp, plot_df + 0.03, labels = sprintf("%.2f", plot_df), cex = 0.7)
+#dev.off()
+```
+
+```{r step6-predict-plot using ggplot}
+library(ggplot2)
+library(tidyr)
+
+# Order comparisons by descending AUC (using the full model as the sort key)
+comparison_order <- pred_results$comparison[order(-pred_results$auc_prot_age_sex)]
+
+# Reshape to long format for ggplot
+auc_long <- pivot_longer(
+  pred_results[, c("comparison", "auc_prot_age_sex", "auc_prot_only", "auc_age_sex_only")],
+  cols = c("auc_prot_age_sex", "auc_prot_only", "auc_age_sex_only"),
+  names_to = "Model", values_to = "AUC"
+)
+
+auc_long$comparison <- factor(auc_long$comparison, levels = comparison_order)
+auc_long$Model <- factor(auc_long$Model,
+                          levels = c("auc_prot_age_sex", "auc_prot_only", "auc_age_sex_only"),
+                          labels = c("Protein + age + sex", "Protein only", "Age + sex only"))
+
+p_auc <- ggplot(auc_long, aes(x = comparison, y = AUC, fill = Model)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = sprintf("%.2f", AUC)),
+            position = position_dodge(width = 0.8), vjust = -0.4, size = 3) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("steelblue", "darkorange", "grey70")) +
+  scale_y_continuous(limits = c(0, 1), expand = expansion(mult = c(0, 0.08))) +
+  labs(x = NULL, y = "Cross-validated AUC",
+       title = "Predicting MetS group from proteins",
+       fill = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top",
+        panel.grid.major.x = element_blank())
+
+p_auc
+
+ggsave(file.path(output_dir, "AUC_barplot.png"), plot = p_auc,
+       width = 8, height = 6, dpi = 600)
+
+ggsave(file.path(output_dir, "AUC_barplot.pdf"), plot = p_auc,
+       width = 8, height = 6, dpi = 600)
+``` 
+
+Counts how often each protein was selected across the 10 CV folds
+(stability selection), and reports effect size (OR, p, FDR q) from a single
+age/sex-adjusted model on the full comparison-specific dataset.
+
+```{r step5-stability-selection}
+get_adj_univariate <- function(data, outcome_col, pos_label, feature, covars) {
+  y <- as.integer(data[[outcome_col]] == pos_label)
+  df <- data[, c(feature, covars)]
+  df$y <- y
+  form <- as.formula(paste("y ~", paste(c(feature, covars), collapse = " + ")))
+  fit <- glm(form, data = df, family = binomial)
+  s <- summary(fit)$coefficients
+  c(OR = exp(s[feature, 1]), p = s[feature, 4])
+}
+
+posthoc_results <- list()
+for (cmp in comparisons) {
+  r <- run_cv_logistic(cmp$data, "MetS_Group", cmp$pos, protein_cols, covars, k_top = 8)
+  freq <- sort(table(unlist(r$fold_feats)), decreasing = TRUE)
+  top_n <- names(freq)[1:min(8, length(freq))]
+
+  tab <- do.call(rbind, lapply(top_n, function(ft) {
+    st <- get_adj_univariate(cmp$data, "MetS_Group", cmp$pos, ft, covars)
+    data.frame(protein = ft,
+               times_selected_of_10 = as.integer(freq[ft]),
+               OR = round(st["OR"], 3),
+               p  = signif(st["p"], 3))
+  }))
+  tab$q <- round(p.adjust(tab$p, method = "BH"), 4)
+  posthoc_results[[cmp$name]] <- tab
+
+  cat("\n---", cmp$name, ": top proteins driving the prediction ---\n")
+  print(tab, row.names = FALSE)
+}
+
+write.csv(do.call(rbind, lapply(names(posthoc_results), function(nm) {
+  cbind(comparison = nm, posthoc_results[[nm]])
+})), file.path(output_dir, "step5_posthoc_predictive_proteins.csv"), row.names = FALSE)
+```
+
+```{r step5-stability-plot, fig.height=6}
+pdf(file.path(output_dir, "protein_posthoc_selection_frequency.pdf"), width = 17, height = 6)
+
+par(mfrow = c(1, 3),
+    mar = c(5, 12, 4, 2),
+    oma = c(1, 1, 1, 1),
+    mgp = c(3, 1, 0))
+
+for (nm in names(posthoc_results)) {
+  tab <- posthoc_results[[nm]]
+  tab <- tab[order(tab$times_selected_of_10), ]
+  barplot(tab$times_selected_of_10, names.arg = tab$protein, horiz = TRUE,
+          las = 1, col = "steelblue", xlim = c(0, 10),
+          main = paste0(nm, ": protein selection frequency (10 CV folds)"),
+          xlab = "Times selected across 10 folds",
+          cex.names = 0.7, cex.axis = 1.1, cex.lab = 1.2, cex.main = 1.1,
+          space = 0.6)
+}
+par(mfrow = c(1, 1))
+
+dev.off()
+```
+
+
+
+
+```{r step7-stability-plot, fig.height=8}
+ library(ggplot2)
+library(tidyr)
+library(ggpubr)
+
+mets_colors <- c("Healthy" = "gray", "Mixed" = "orange", "Extreme" = "red")
+
+# Read the saved post-hoc table
+posthoc_csv <- read.csv("proteomics_MetS_analysis_results/step5_posthoc_predictive_proteins.csv",
+                         stringsAsFactors = FALSE)
+
+# Use `prot` -- the proteomics data frame, which already has MetS_Group attached
+# (NOT `merged`, which is the metabolomics table and has no protein columns)
+em_subset <- prot[prot$MetS_Group %in% c("Mixed", "Extreme"), ]
+em_subset$MetS_Group <- factor(em_subset$MetS_Group, levels = c("Mixed", "Extreme"))
+
+eh_subset <- prot[prot$MetS_Group %in% c("Healthy", "Extreme"), ]
+eh_subset$MetS_Group <- factor(eh_subset$MetS_Group, levels = c("Healthy", "Extreme"))
+
+mh_subset <- prot[prot$MetS_Group %in% c("Healthy", "Mixed"), ]
+mh_subset$MetS_Group <- factor(mh_subset$MetS_Group, levels = c("Healthy", "Mixed"))
+
+comparison_data <- list(
+  "Extreme vs Mixed"   = em_subset,
+  "Extreme vs Healthy" = eh_subset,
+  "Mixed vs Healthy"   = mh_subset
+)
+
+# Clean protein/gene symbol for facet labels (same helper used earlier)
+extract_protein_name <- function(x) {
+  sapply(x, function(id) {
+    first_id <- sub("___.*$", "", id)
+    parts    <- strsplit(first_id, "__", fixed = TRUE)[[1]]
+    name     <- parts[length(parts)]
+    sub("_HUMAN$", "", name)
+  }, USE.NAMES = FALSE)
+}
+
+posthoc_boxplot_list <- list()
+
+for (cmp_name in unique(posthoc_csv$comparison)) {
+  top_n <- posthoc_csv$protein[posthoc_csv$comparison == cmp_name]
+  cmp_data <- comparison_data[[cmp_name]]
+
+  missing_cols <- setdiff(top_n, colnames(cmp_data))
+  if (length(missing_cols) > 0) {
+    warning("Skipping missing columns for ", cmp_name, ": ", paste(missing_cols, collapse = ", "))
+    top_n <- setdiff(top_n, missing_cols)
+  }
+
+  plot_df <- cmp_data[, c(top_n, "MetS_Group")]
+  plot_long <- pivot_longer(plot_df, cols = all_of(top_n),
+                             names_to = "Protein", values_to = "Level")
+
+  plot_long$ProteinLabel <- extract_protein_name(plot_long$Protein)
+  plot_long$ProteinLabel <- factor(plot_long$ProteinLabel,
+                                    levels = unique(extract_protein_name(top_n)))
+
+  p <- ggplot(plot_long, aes(x = MetS_Group, y = Level, fill = MetS_Group)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+    geom_jitter(width = 0.15, size = 0.6, alpha = 0.4) +
+    facet_wrap(~ ProteinLabel, scales = "free_y", ncol = 4) +
+    scale_fill_manual(values = mets_colors) +
+    stat_compare_means(method = "wilcox.test", label = "p.format", size = 3) +
+    theme_bw() +
+    theme(legend.position = "none",
+          strip.text = element_text(size = 8),
+          axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(x = NULL, y = "Protein level",
+         title = paste0("Top stability-selected proteins: ", cmp_name))
+
+  print(p)
+  posthoc_boxplot_list[[cmp_name]] <- p
+
+  ggsave(file.path(output_dir, paste0("step5_boxplots_", gsub(" ", "_", cmp_name), ".png")),
+         plot = p, width = 10, height = 7, dpi = 600)
+}
+``` 
+
+## Session info
+
+```{r session-info}
+sessionInfo()
+```

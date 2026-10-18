@@ -1,0 +1,5160 @@
+---
+title: "Diving into Mixed"
+author: "Homa Bazireh"
+date: "2026-07-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+
+#Retrievininng the libraries
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+library(glmnet); library(nestedcv); library(modeltools); library(archetypes); library(archetypal); library(stats4); library(nnls); library(vcd); library(factoextra); library(FactoMineR); library(scatterplot3d); library(plotly); library(ggplot2); library(ggsci); library(CBCgrps); library(pheatmap); library(corrplot);  library(ggalluvial); library(ggpubr); library(dplyr); library(tidyr); library(broom); library(naniar); library(mice); library(Amelia); library(rgl); library(fossil); library(clusterCrit); library(knitr); library(kableExtra); library(kohonen); library(fclust); library(fpc); library(dbscan); library(clusterSim); library(gridExtra); library(viridis); library(zip); library(ggfortify); library(orca); library(webshot);library(ggsankey)
+```
+
+#creating the data.soft again
+```{r}
+Data <- read.csv(file = "clinical.csv", dec = ".", sep = ";")
+
+
+
+dim(Data)
+Data.soft <- Data[, c(7,9,  12:17, 20, 21, 24:26, 38, 40, 42, 50,52,57,64,65,66,67, 71:74, 78, 81, 82)]
+dim(Data.soft)
+Data.soft <- Data.soft[
+  complete.cases(Data.soft[, -c(1, 2), drop = FALSE]),
+  ,
+  drop = FALSE
+]
+
+dim(Data.soft)
+
+ 
+# Normalising
+Data.soft_subset <- Data.soft[
+  , !names(Data.soft) %in% c(
+    "u3n_prot_OmicEra_ff4",
+    "u3n_metabBiocrP500_ff4",
+    "u3csex",
+    "u3twhratc",
+    "u3tdm110y15",
+    "u3tbmiwho",
+    "u3twhoish",
+    "u3tmsidfup"
+  )
+]
+
+numeric_cols <- names(Data.soft_subset)[
+  sapply(Data.soft_subset, is.numeric)
+] # Get names of numeric columns
+
+dim(Data.soft_subset)
+
+#### Apply the transformation to each numeric column in the original Data.soft and then viewing the data 
+
+Data.soft[numeric_cols] <- lapply(Data.soft[numeric_cols], function(col) { 
+  qnorm((rank(col, na.last = "keep") - 0.5) / sum(!is.na(col)))
+})
+
+Data.soft.Metabolic <- Data.soft[Data.soft$u3tmsidfup == 1,]
+Data.soft.Metabolic <- subset(
+  Data.soft,
+  u3tmsidfup == 1,
+  select = -u3tmsidfup
+)
+dim(Data.soft.Metabolic)
+
+save(Data.soft.Metabolic, file = "Data.soft.Metabolic.RData")
+getwd()
+```
+
+```{r}
+hist(data.matrix(Data.soft[,-c(1,2,4,8, 10, 13, 16)]))
+```
+
+
+
+
+#loading the as.robust. Metabolic sensitivity analysis and metabolic data 
+```{r}
+
+load("as.robust.Metabolic.RData")
+
+load("Data.soft.Metabolic.RData")#Data.soft.Metabolic
+```
+
+#extracting assignments 
+```{r}
+a2_M <- as.robust.Metabolic[[2]]  # Extract archetype model for k = 2
+a3_M <- as.robust.Metabolic[[3]]  # Extract archetype model for k = 3
+a4_M <- as.robust.Metabolic[[4]]  # Extract archetype model for k = 4
+a5_M <- as.robust.Metabolic[[5]]  # Extract archetype model for k = 5
+a6_M <- as.robust.Metabolic[[6]]  # Extract archetype model for k = 6
+
+
+# If you want to inspect the alphas (archetype assignments)
+assignments_a2_M <- bestModel(a2_M)$alphas
+assignments_a3_M <- bestModel(a3_M)$alphas
+assignments_a4_M <- bestModel(a4_M)$alphas
+assignments_a5_M <- bestModel(a5_M)$alphas
+assignments_a6_M <- bestModel(a6_M)$alphas
+```
+
+
+#Assigning each person of MetS to different archetypes after deciding the best numbers of archetypes
+```{r}
+#chang the assignements
+# Get the indices of extreme archetypes
+Extreme.archetype_indices <- which(assignments_a3_M > 0.7, arr.ind = TRUE)  # Get indices of extreme archetypes with #information about the row and coloms 
+Extreme.archetype_indices
+Participants.number <- Extreme.archetype_indices[,c(1,2)]
+
+Participants.number <- data.frame(Participant_Number = Participants.number[, 1],
+                                  Archetype_Number = Participants.number[, 2])
+Participants.number
+
+# Initialize Extreme_Archetype_Number with NA
+Data.soft.Metabolic$Extreme_Archetype_Number <- NA  
+
+# Populate Extreme_Archetype_Number for extreme participants
+for (i in 1:nrow(Participants.number)) {
+  participant_id <- Participants.number$Participant_Number[i]
+  archetype_id <- Participants.number$Archetype_Number[i]
+  
+  # Assign the archetype number to the corresponding participant in Data.soft
+  Data.soft.Metabolic$Extreme_Archetype_Number[participant_id] <- archetype_id
+}
+
+mixed_etiology <- which(apply(assignments_a3_M, 1, function(x) all(x < 0.7)))#change the assignment
+
+# Assign a specific value for mixed etiology participants in Extreme_Archetype_Number
+Data.soft.Metabolic$Extreme_Archetype_Number[mixed_etiology] <- "Mixed Etiology"  # You can change this label as needed
+```
+
+#diving in to the mixed etiology
+```{r}
+# Subset alphas for mixed etiology individuals
+mixed_scores <- bestModel(a3_M)$alphas[mixed_etiology,]
+
+# Identify the highest and second highest archetype memberships
+archetype_labels <- c("M1", "M2", "M3")
+highest_archetypes <- apply(mixed_scores, 1, function(x) order(x, decreasing = TRUE)[1])
+
+second_highest_archetypes <- apply(mixed_scores, 1, function(x) order(x, decreasing = TRUE)[2])
+
+highest_labels <- archetype_labels[highest_archetypes]
+second_highest_labels <- archetype_labels[second_highest_archetypes]
+
+# Combine primary and secondary archetypes into a group
+mixed_groups <- paste0(highest_labels, ",", second_highest_labels)
+Data.soft.Metabolic$Mixed_Group <- NA
+Data.soft.Metabolic$Mixed_Group[mixed_etiology] <- mixed_groups
+
+# Create a data frame to hold the results
+mixed <- data.frame(
+  Participant = mixed_etiology,
+  Highest_Archetype = highest_archetypes,
+  Second_Highest_Archetype = second_highest_archetypes
+)
+
+mixed
+mixed_scores
+single_dominating <- apply(mixed_scores, 1, function(x) sum(x >= 0.4) == 1)
+two_dominating <- apply(mixed_scores, 1, function(x) sum(x >= 0.4) == 2)
+no_dominating <- apply(mixed_scores, 1, function(x) all(x < 0.4))
+
+# Count participants in each category
+count_single_dominating <- sum(single_dominating)
+count_two_dominating <- sum(two_dominating)
+count_no_dominating <- sum(no_dominating)
+
+print(count_single_dominating)
+print(count_two_dominating)
+print(count_no_dominating)
+mixed_groups <- paste0(highest_labels, second_highest_labels)
+table(mixed_groups)
+
+Data.soft.Metabolic$Mixed_Group <- NA
+Data.soft.Metabolic$Mixed_Group[mixed_etiology] <- mixed_groups
+```
+
+
+#Defining the extreme groupes in NA coloumns of mixed groups 
+```{r}
+Data.soft.Metabolic$Mixed_Group <- ifelse(
+  is.na(Data.soft.Metabolic$Mixed_Group),
+  paste0("M", Data.soft.Metabolic$Extreme_Archetype_Number),
+  as.character(Data.soft.Metabolic$Mixed_Group)
+)
+```
+
+
+```{r}
+save(Data.soft.Metabolic, file = "Data.soft.Metabolic.RData")
+getwd()
+```
+
+
+
+#loading the metabolites and proteomics data 
+```{r}
+load("Merged.Metabolomics.Data.soft.MetS.RData")
+
+
+load("Merged.proteomics.Data.soft.MetS.RData")
+
+
+significant_metabolites_extracted <-
+  Metabolite_Archetype_Regression_Results[
+    Metabolite_Archetype_Regression_Results$Adjusted_P_value < 0.05,
+  ]
+```
+
+
+#loading top metabolites and proteins
+```{r}
+significant_proteins_extracted <- read.csv(
+  file = "significant_proteins_extracted_2026-04-07.csv",
+  header = TRUE,
+  sep = ",",
+  dec = "."
+)
+
+Metabolite_Archetype_Regression_Results <- read.csv("Metabolite_Archetype_Regression_Results_2026-04-07.csv", dec = ".", sep = ",")
+
+```
+
+
+#add mixed groups labels to the proteomics and metabolomics merged data
+```{r}
+#merging the metabolomics
+New_merged_metabolomics <- merge(
+  Merged.Metabolomics.Data.soft.MetS,
+  Data.soft.Metabolic,
+  by = "u3n_metabBiocrP500_ff4"
+)
+
+# Remove repeated .y columns
+New_merged_metabolomics <- New_merged_metabolomics[
+  , !grepl("\\.y$", names(New_merged_metabolomics))
+]
+
+# Remove .x suffix from the retained columns
+names(New_merged_metabolomics) <- sub(
+  "\\.x$",
+  "",
+  names(New_merged_metabolomics)
+)
+
+colnames(New_merged_metabolomics)
+dim(New_merged_metabolomics)
+
+#mergeing the proteomics
+New_merged_proteomics <- merge(Merged.proteomics.Data.soft.MetS, Data.soft.Metabolic,
+  by = "u3n_prot_OmicEra_ff4"
+)
+New_merged_proteomics <- merge(
+  Merged.proteomics.Data.soft.MetS,
+  Data.soft.Metabolic,
+  by = "u3n_prot_OmicEra_ff4"
+)
+
+# Remove repeated .y columns
+New_merged_proteomics <- New_merged_proteomics[
+  , !grepl("\\.y$", names(New_merged_proteomics))
+]
+
+# Remove .x suffix from retained columns
+names(New_merged_proteomics) <- sub(
+  "\\.x$",
+  "",
+  names(New_merged_proteomics)
+)
+
+colnames(New_merged_proteomics)
+dim(New_merged_proteomics)
+  
+```
+
+```{r}
+library(pheatmap)
+
+# ============================================================
+# ============================================================
+
+mixed_label <- as.character(
+  New_merged_metabolomics$Mixed_Group
+)
+
+# Convert blank values or text "NA" to actual NA
+mixed_label[
+  trimws(mixed_label) %in% c("", "NA")
+] <- NA_character_
+
+extreme_number <- as.character(
+  New_merged_metabolomics$Extreme_Archetype_Number
+)
+extreme_label <- ifelse(
+  grepl("^[0-9]+$", extreme_number),
+  paste0("M", extreme_number),
+  NA_character_
+)
+
+# Use Mixed_Group when available; otherwise use the extreme label
+New_merged_metabolomics$Comparison_Group <- ifelse(
+  !is.na(mixed_label),
+  mixed_label,
+  extreme_label
+)
+
+New_merged_metabolomics$Comparison_Group <- factor(
+  New_merged_metabolomics$Comparison_Group
+)
+
+# Check group sizes
+table(
+  New_merged_metabolomics$Comparison_Group,
+  useNA = "ifany"
+)
+
+
+# ============================================================
+# ============================================================
+
+first_metabolite <- match(
+  "C0",
+  names(New_merged_metabolomics)
+)
+
+last_metabolite <- match(
+  "Choline",
+  names(New_merged_metabolomics)
+)
+
+# Stop if the metabolite columns cannot be found
+if (
+  is.na(first_metabolite) ||
+  is.na(last_metabolite)
+) {
+  stop("C0 or Choline could not be found in the dataset.")
+}
+
+metabolite_vars <- names(New_merged_metabolomics)[
+  first_metabolite:last_metabolite
+]
+
+length(metabolite_vars)
+head(metabolite_vars)
+tail(metabolite_vars)
+
+
+# ============================================================
+# ============================================================
+
+comparison_groups <- levels(
+  droplevels(
+    New_merged_metabolomics$Comparison_Group
+  )
+)
+
+comparison_groups
+
+
+# ============================================================
+# ============================================================
+
+test_estimates <- matrix(
+  NA_real_,
+  nrow = length(metabolite_vars),
+  ncol = length(comparison_groups),
+  dimnames = list(
+    metabolite_vars,
+    comparison_groups
+  )
+)
+
+standard_errors <- matrix(
+  NA_real_,
+  nrow = length(metabolite_vars),
+  ncol = length(comparison_groups),
+  dimnames = list(
+    metabolite_vars,
+    comparison_groups
+  )
+)
+
+p_values <- matrix(
+  NA_real_,
+  nrow = length(metabolite_vars),
+  ncol = length(comparison_groups),
+  dimnames = list(
+    metabolite_vars,
+    comparison_groups
+  )
+)
+
+n_group <- matrix(
+  NA_integer_,
+  nrow = length(metabolite_vars),
+  ncol = length(comparison_groups),
+  dimnames = list(
+    metabolite_vars,
+    comparison_groups
+  )
+)
+
+n_rest <- matrix(
+  NA_integer_,
+  nrow = length(metabolite_vars),
+  ncol = length(comparison_groups),
+  dimnames = list(
+    metabolite_vars,
+    comparison_groups
+  )
+)
+
+
+# ============================================================
+#
+# Model:
+# Metabolite ~ group versus rest + age + sex
+# ============================================================
+
+for (group in comparison_groups) {
+
+  for (metabolite in metabolite_vars) {
+
+    model_data <- data.frame(
+      Outcome = New_merged_metabolomics[[metabolite]],
+
+      Comparison_Group =
+        New_merged_metabolomics$Comparison_Group,
+
+      Age =
+        New_merged_metabolomics$u3talteru,
+
+      Sex =
+        New_merged_metabolomics$u3csex
+    )
+
+    # Remove rows missing the metabolite, group, age, or sex
+    model_data <- model_data[
+      complete.cases(model_data),
+      ,
+      drop = FALSE
+    ]
+
+    # Create binary variable:
+    model_data$Group_indicator <- as.integer(
+      model_data$Comparison_Group == group
+    )
+
+    model_data$Sex <- factor(
+      model_data$Sex
+    )
+
+    number_in_group <- sum(
+      model_data$Group_indicator == 1
+    )
+
+    number_in_rest <- sum(
+      model_data$Group_indicator == 0
+    )
+
+    n_group[metabolite, group] <-
+      number_in_group
+
+    n_rest[metabolite, group] <-
+      number_in_rest
+
+    # Run only when both comparison groups contain enough participants
+    if (
+      number_in_group > 2 &&
+      number_in_rest > 2
+    ) {
+
+      model <- tryCatch(
+        lm(
+          Outcome ~
+            Group_indicator +
+            Age +
+            Sex,
+          data = model_data
+        ),
+        error = function(e) NULL
+      )
+
+      if (!is.null(model)) {
+
+        model_summary <- coef(
+          summary(model)
+        )
+
+        if (
+          "Group_indicator" %in%
+            rownames(model_summary)
+        ) {
+
+          test_estimates[metabolite, group] <-
+            model_summary[
+              "Group_indicator",
+              "Estimate"
+            ]
+
+          standard_errors[metabolite, group] <-
+            model_summary[
+              "Group_indicator",
+              "Std. Error"
+            ]
+
+          p_values[metabolite, group] <-
+            model_summary[
+              "Group_indicator",
+              "Pr(>|t|)"
+            ]
+        }
+      }
+    }
+  }
+}
+
+
+# ============================================================
+#
+# FDR is calculated across all metabolites separately
+# for each group-versus-rest comparison.
+# ============================================================
+
+adjusted_p_values <- apply(
+  p_values,
+  2,
+  function(x) {
+    p.adjust(
+      x,
+      method = "fdr"
+    )
+  }
+)
+
+# Restore matrix dimensions if needed
+adjusted_p_values <- matrix(
+  adjusted_p_values,
+  nrow = nrow(p_values),
+  ncol = ncol(p_values),
+  dimnames = dimnames(p_values)
+)
+
+
+# ============================================================
+# ============================================================
+
+get_significance <- function(p) {
+
+  if (is.na(p)) {
+    return("")
+  }
+
+  if (p < 0.001) {
+    return("***")
+  }
+
+  if (p < 0.01) {
+    return("**")
+  }
+
+  if (p < 0.05) {
+    return("*")
+  }
+
+  return("")
+}
+
+significance <- matrix(
+  vapply(
+    as.vector(adjusted_p_values),
+    get_significance,
+    character(1)
+  ),
+  nrow = nrow(adjusted_p_values),
+  ncol = ncol(adjusted_p_values),
+  dimnames = dimnames(adjusted_p_values)
+)
+
+
+# ============================================================
+# ============================================================
+
+metabolite_regression_results <- data.frame(
+  Metabolite = rep(
+    rownames(test_estimates),
+    times = ncol(test_estimates)
+  ),
+
+  Comparison = rep(
+    colnames(test_estimates),
+    each = nrow(test_estimates)
+  ),
+
+  Estimate = as.vector(
+    test_estimates
+  ),
+
+  Standard_Error = as.vector(
+    standard_errors
+  ),
+
+  P_value = as.vector(
+    p_values
+  ),
+
+  FDR = as.vector(
+    adjusted_p_values
+  ),
+
+  N_group = as.vector(
+    n_group
+  ),
+
+  N_rest = as.vector(
+    n_rest
+  )
+)
+
+# Sort by FDR
+metabolite_regression_results <-
+  metabolite_regression_results[
+    order(
+      metabolite_regression_results$FDR
+    ),
+  ]
+
+head(metabolite_regression_results)
+
+
+# ============================================================
+# ============================================================
+
+significant_metabolite_results <-
+  metabolite_regression_results[
+    !is.na(
+      metabolite_regression_results$FDR
+    ) &
+      metabolite_regression_results$FDR < 0.05,
+  ]
+
+dim(significant_metabolite_results)
+
+head(significant_metabolite_results)
+
+
+# Save complete results
+write.csv(
+  metabolite_regression_results,
+  file =
+    "Metabolite_Extreme_Mixed_Group_Regression_Results.csv",
+  row.names = FALSE
+)
+
+# Save significant results
+write.csv(
+  significant_metabolite_results,
+  file =
+    "Significant_Metabolite_Extreme_Mixed_Group_Results.csv",
+  row.names = FALSE
+)
+
+
+# ============================================================
+# ============================================================
+
+significant_metabolites <- apply(
+  adjusted_p_values,
+  1,
+  function(x) {
+    any(
+      x < 0.05,
+      na.rm = TRUE
+    )
+  }
+)
+
+sum(significant_metabolites)
+
+heatmap_estimates <- test_estimates[
+  significant_metabolites,
+  ,
+  drop = FALSE
+]
+
+heatmap_significance <- significance[
+  significant_metabolites,
+  ,
+  drop = FALSE
+]
+
+
+# ============================================================
+# ============================================================
+
+if (nrow(heatmap_estimates) > 0) {
+
+  my_palette <- colorRampPalette(
+    c(
+      "blue",
+      "white",
+      "red"
+    )
+  )(50)
+
+  png(
+    filename =
+      "Heatmap_Extreme_and_Mixed_Groups_Metabolomics_fdr.png",
+    width = 12,
+    height = max(
+      8,
+      nrow(heatmap_estimates) * 0.22
+    ),
+    units = "in",
+    res = 600
+  )
+
+  pheatmap(
+    heatmap_estimates,
+    cluster_rows = TRUE,
+    cluster_cols = FALSE,
+
+    # Standardizes regression estimates across groups
+    # separately for each metabolite
+    scale = "row",
+
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+
+    display_numbers =
+      heatmap_significance,
+
+    number_color = "black",
+
+    color = my_palette,
+
+    angle_col = "0",
+
+    fontsize_row = 7,
+    fontsize_col = 11,
+
+    border_color = NA,
+
+    main =
+      "Metabolite Profiles of Extreme and Mixed Etiology Groups"
+  )
+
+  dev.off()
+
+} else {
+
+  message(
+    "No metabolites were significant after FDR correction."
+  )
+}
+
+
+# ============================================================
+# ============================================================
+
+getwd()
+```
+
+#comparison between the mixed groups togther
+```{r}
+# ============================================================
+# Pairwise metabolite comparisons between mixed groups only
+# Linear regression adjusted for age and sex
+# ============================================================
+
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(emmeans)
+library(pheatmap)
+
+
+# ============================================================
+# ============================================================
+
+mixed_groups <- c(
+  "M1M2",
+  "M1M3",
+  "M2M1",
+  "M2M3",
+  "M3M1",
+  "M3M2"
+)
+
+
+# ============================================================
+# ============================================================
+
+New_merged_metabolomics$Mixed_Group <- as.character(
+  New_merged_metabolomics$Mixed_Group
+)
+
+New_merged_metabolomics$Mixed_Group[
+  trimws(New_merged_metabolomics$Mixed_Group) %in%
+    c("", "NA")
+] <- NA_character_
+
+
+# ============================================================
+# ============================================================
+
+Mixed_metabolomics_data <-
+  New_merged_metabolomics[
+    New_merged_metabolomics$Mixed_Group %in% mixed_groups,
+    ,
+    drop = FALSE
+  ]
+
+Mixed_metabolomics_data$Comparison_Group <- factor(
+  Mixed_metabolomics_data$Mixed_Group,
+  levels = mixed_groups
+)
+
+Mixed_metabolomics_data$u3csex <- factor(
+  Mixed_metabolomics_data$u3csex
+)
+
+# Check group sizes
+table(
+  Mixed_metabolomics_data$Comparison_Group,
+  useNA = "ifany"
+)
+
+dim(Mixed_metabolomics_data)
+
+
+# ============================================================
+# ============================================================
+
+first_metabolite <- match(
+  "C0",
+  names(Mixed_metabolomics_data)
+)
+
+last_metabolite <- match(
+  "Choline",
+  names(Mixed_metabolomics_data)
+)
+
+if (
+  is.na(first_metabolite) ||
+  is.na(last_metabolite)
+) {
+  stop(
+    "The metabolite columns C0 or Choline could not be found."
+  )
+}
+
+metabolite_vars <- names(Mixed_metabolomics_data)[
+  first_metabolite:last_metabolite
+]
+
+# Keep numeric metabolites only
+metabolite_vars <- metabolite_vars[
+  vapply(
+    Mixed_metabolomics_data[metabolite_vars],
+    is.numeric,
+    logical(1)
+  )
+]
+
+length(metabolite_vars)
+head(metabolite_vars)
+tail(metabolite_vars)
+
+
+# ============================================================
+# ============================================================
+
+if (exists("pairwise_metabolite_results")) {
+  rm(pairwise_metabolite_results)
+}
+
+model_errors <- list()
+
+
+# ============================================================
+#
+# Model:
+# Metabolite ~ Mixed group + Age + Sex
+# ============================================================
+
+pairwise_metabolite_results <- purrr::map_dfr(
+  metabolite_vars,
+  function(metabolite) {
+
+    model_data <- data.frame(
+      Outcome =
+        Mixed_metabolomics_data[[metabolite]],
+
+      Comparison_Group =
+        Mixed_metabolomics_data$Comparison_Group,
+
+      Age =
+        Mixed_metabolomics_data$u3talteru,
+
+      Sex =
+        Mixed_metabolomics_data$u3csex
+    )
+
+    # Remove missing observations
+    model_data <- model_data[
+      stats::complete.cases(model_data),
+      ,
+      drop = FALSE
+    ]
+
+    model_data$Comparison_Group <- droplevels(
+      factor(model_data$Comparison_Group)
+    )
+
+    model_data$Sex <- droplevels(
+      factor(model_data$Sex)
+    )
+
+    # Skip if fewer than two groups remain
+    if (nlevels(model_data$Comparison_Group) < 2) {
+
+      model_errors[[metabolite]] <<-
+        "Fewer than two mixed groups remained."
+
+      return(NULL)
+    }
+
+    # Skip if only one sex category remains
+    if (nlevels(model_data$Sex) < 2) {
+
+      model_errors[[metabolite]] <<-
+        "Only one sex category remained."
+
+      return(NULL)
+    }
+
+    # Skip if the metabolite has no variation
+    if (
+      length(unique(model_data$Outcome)) < 2 ||
+      is.na(stats::sd(model_data$Outcome)) ||
+      stats::sd(model_data$Outcome) == 0
+    ) {
+
+      model_errors[[metabolite]] <<-
+        "The metabolite had no variation."
+
+      return(NULL)
+    }
+
+    # Fit linear regression
+    model <- tryCatch(
+      stats::lm(
+        Outcome ~ Comparison_Group + Age + Sex,
+        data = model_data
+      ),
+      error = function(e) {
+
+        model_errors[[metabolite]] <<- paste(
+          "Linear-model error:",
+          conditionMessage(e)
+        )
+
+        return(NULL)
+      }
+    )
+
+    if (is.null(model)) {
+      return(NULL)
+    }
+
+    # Calculate adjusted means for the mixed groups
+    estimated_means <- tryCatch(
+      emmeans::emmeans(
+        model,
+        specs = "Comparison_Group"
+      ),
+      error = function(e) {
+
+        model_errors[[metabolite]] <<- paste(
+          "emmeans error:",
+          conditionMessage(e)
+        )
+
+        return(NULL)
+      }
+    )
+
+    if (is.null(estimated_means)) {
+      return(NULL)
+    }
+
+    # All direct pairwise comparisons
+    pairwise_results <- tryCatch(
+      as.data.frame(
+        emmeans::contrast(
+          estimated_means,
+          method = "pairwise",
+          adjust = "none"
+        )
+      ),
+      error = function(e) {
+
+        model_errors[[metabolite]] <<- paste(
+          "Pairwise-contrast error:",
+          conditionMessage(e)
+        )
+
+        return(NULL)
+      }
+    )
+
+    if (
+      is.null(pairwise_results) ||
+      nrow(pairwise_results) == 0
+    ) {
+      return(NULL)
+    }
+
+    pairwise_results |>
+      dplyr::mutate(
+        Metabolite = metabolite,
+        N = stats::nobs(model)
+      )
+  }
+)
+
+
+# ============================================================
+# ============================================================
+
+if (
+  is.null(pairwise_metabolite_results) ||
+  nrow(pairwise_metabolite_results) == 0
+) {
+
+  print(
+    utils::head(
+      model_errors,
+      20
+    )
+  )
+
+  stop(
+    paste(
+      "No pairwise results were generated.",
+      "Inspect model_errors for the causes."
+    )
+  )
+}
+
+dim(pairwise_metabolite_results)
+colnames(pairwise_metabolite_results)
+head(pairwise_metabolite_results)
+
+
+# ============================================================
+# ============================================================
+
+if (
+  !"contrast" %in%
+    names(pairwise_metabolite_results)
+) {
+  stop(
+    paste0(
+      "The contrast column was not found. Available columns: ",
+      paste(
+        names(pairwise_metabolite_results),
+        collapse = ", "
+      )
+    )
+  )
+}
+
+
+# ============================================================
+# ============================================================
+
+pairwise_metabolite_results <-
+  pairwise_metabolite_results |>
+  tidyr::separate(
+    col = contrast,
+    into = c(
+      "Group1",
+      "Group2"
+    ),
+    sep = " - ",
+    remove = FALSE,
+    extra = "merge",
+    fill = "right"
+  ) |>
+  dplyr::mutate(
+    Group1 = trimws(Group1),
+    Group2 = trimws(Group2),
+
+    Comparison = paste0(
+      Group1,
+      "_vs_",
+      Group2
+    )
+  )
+
+# Check comparison names
+unique(
+  pairwise_metabolite_results$Comparison
+)
+
+head(
+  pairwise_metabolite_results |>
+    dplyr::select(
+      contrast,
+      Group1,
+      Group2,
+      Comparison
+    )
+)
+
+
+# ============================================================
+#
+# FDR is calculated across metabolites separately for each
+# pairwise group comparison.
+# ============================================================
+
+pairwise_metabolite_results <-
+  pairwise_metabolite_results |>
+  dplyr::group_by(
+    Comparison
+  ) |>
+  dplyr::mutate(
+    FDR = stats::p.adjust(
+      p.value,
+      method = "fdr"
+    )
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::select(
+    Metabolite,
+    contrast,
+    Group1,
+    Group2,
+    Comparison,
+    estimate,
+    SE,
+    df,
+    t.ratio,
+    p.value,
+    FDR,
+    N
+  ) |>
+  dplyr::arrange(
+    Comparison,
+    FDR
+  )
+
+head(pairwise_metabolite_results)
+dim(pairwise_metabolite_results)
+
+
+# ============================================================
+# ============================================================
+
+significant_pairwise_metabolites <-
+  pairwise_metabolite_results |>
+  dplyr::filter(
+    !is.na(FDR),
+    FDR < 0.05
+  ) |>
+  dplyr::arrange(
+    FDR
+  )
+
+dim(significant_pairwise_metabolites)
+head(significant_pairwise_metabolites)
+
+
+# Number of unique significant metabolites
+number_unique_significant_metabolites <- length(
+  unique(
+    significant_pairwise_metabolites$Metabolite
+  )
+)
+
+number_unique_significant_metabolites
+
+
+# Number of significant metabolites per comparison
+significant_results_per_comparison <-
+  significant_pairwise_metabolites |>
+  dplyr::count(
+    Comparison,
+    name = "Number_significant_metabolites"
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(
+      Number_significant_metabolites
+    )
+  )
+
+significant_results_per_comparison
+
+
+# ============================================================
+# ============================================================
+
+utils::write.csv(
+  pairwise_metabolite_results,
+  file =
+    "Mixed_Group_Pairwise_Metabolite_Regression_Results.csv",
+  row.names = FALSE
+)
+
+utils::write.csv(
+  significant_pairwise_metabolites,
+  file =
+    "Significant_Mixed_Group_Pairwise_Metabolite_Results.csv",
+  row.names = FALSE
+)
+
+utils::write.csv(
+  significant_results_per_comparison,
+  file =
+    "Number_of_Significant_Metabolites_Per_Comparison.csv",
+  row.names = FALSE
+)
+
+
+# ============================================================
+# ============================================================
+
+get_significance <- function(p) {
+
+  if (is.na(p)) {
+    return("")
+  }
+
+  if (p < 0.001) {
+    return("***")
+  }
+
+  if (p < 0.01) {
+    return("**")
+  }
+
+  if (p < 0.05) {
+    return("*")
+  }
+
+  return("")
+}
+
+
+pairwise_metabolite_results <-
+  pairwise_metabolite_results |>
+  dplyr::mutate(
+    Significance = vapply(
+      FDR,
+      get_significance,
+      character(1)
+    )
+  )
+
+
+# ============================================================
+# one comparison
+# ============================================================
+
+significant_metabolite_names <-
+  pairwise_metabolite_results |>
+  dplyr::filter(
+    !is.na(FDR),
+    FDR < 0.05
+  ) |>
+  dplyr::distinct(
+    Metabolite
+  ) |>
+  dplyr::pull(
+    Metabolite
+  )
+
+length(significant_metabolite_names)
+
+
+# ============================================================
+# ============================================================
+
+if (
+  length(significant_metabolite_names) > 0
+) {
+
+  # Regression-estimate matrix
+  estimate_data <-
+    pairwise_metabolite_results |>
+    dplyr::filter(
+      Metabolite %in%
+        significant_metabolite_names
+    ) |>
+    dplyr::select(
+      Metabolite,
+      Comparison,
+      estimate
+    ) |>
+    tidyr::pivot_wider(
+      names_from = Comparison,
+      values_from = estimate
+    )
+
+  estimate_matrix <- as.data.frame(
+    estimate_data
+  )
+
+  rownames(estimate_matrix) <-
+    estimate_matrix$Metabolite
+
+  estimate_matrix$Metabolite <- NULL
+
+  estimate_matrix <- as.matrix(
+    estimate_matrix
+  )
+
+
+  # Significance-star matrix
+  significance_data <-
+    pairwise_metabolite_results |>
+    dplyr::filter(
+      Metabolite %in%
+        significant_metabolite_names
+    ) |>
+    dplyr::select(
+      Metabolite,
+      Comparison,
+      Significance
+    ) |>
+    tidyr::pivot_wider(
+      names_from = Comparison,
+      values_from = Significance,
+      values_fill = ""
+    )
+
+  significance_matrix <- as.data.frame(
+    significance_data
+  )
+
+  rownames(significance_matrix) <-
+    significance_matrix$Metabolite
+
+  significance_matrix$Metabolite <- NULL
+
+  significance_matrix <- as.matrix(
+    significance_matrix
+  )
+
+  # Ensure matching rows and columns
+  significance_matrix <-
+    significance_matrix[
+      rownames(estimate_matrix),
+      colnames(estimate_matrix),
+      drop = FALSE
+    ]
+
+
+  # ==========================================================
+  # ==========================================================
+
+  my_palette <- colorRampPalette(
+    c(
+      "blue",
+      "white",
+      "red"
+    )
+  )(50)
+
+  grDevices::png(
+    filename =
+      "Heatmap_Mixed_Group_Pairwise_Metabolite_Comparisons.png",
+    width = 16,
+    height = max(
+      8,
+      nrow(estimate_matrix) * 0.22
+    ),
+    units = "in",
+    res = 600
+  )
+
+  pheatmap::pheatmap(
+    estimate_matrix,
+
+    cluster_rows =
+      nrow(estimate_matrix) > 1,
+
+    cluster_cols = FALSE,
+
+    scale = "row",
+
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+
+    display_numbers =
+      significance_matrix,
+
+    number_color = "black",
+
+    color = my_palette,
+
+    angle_col = "45",
+
+    fontsize_row = 7,
+    fontsize_col = 8,
+
+    border_color = NA,
+
+    main =
+      "Pairwise Metabolite Comparisons Between Mixed Etiology Groups"
+  )
+
+  grDevices::dev.off()
+
+} else {
+
+  message(
+    "No metabolites were significant after FDR correction."
+  )
+}
+
+
+# ============================================================
+# ============================================================
+
+length(model_errors)
+
+utils::head(
+  model_errors,
+  20
+)
+
+getwd()
+```
+
+
+#comparison using the nonparametric test 
+
+```{r}
+# ============================================================
+# Pairwise Wilcoxon comparisons between mixed groups
+# ============================================================
+
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(pheatmap)
+
+
+# ============================================================
+# ============================================================
+
+mixed_groups <- c(
+  "M1M2",
+  "M1M3",
+  "M2M1",
+  "M2M3",
+  "M3M1",
+  "M3M2"
+)
+
+
+# ============================================================
+# ============================================================
+
+New_merged_metabolomics$Mixed_Group <- as.character(
+  New_merged_metabolomics$Mixed_Group
+)
+
+# Convert blank values and character "NA" to actual NA
+New_merged_metabolomics$Mixed_Group[
+  trimws(New_merged_metabolomics$Mixed_Group) %in%
+    c("", "NA")
+] <- NA_character_
+
+
+# ============================================================
+# ============================================================
+
+Mixed_metabolomics_data <-
+  New_merged_metabolomics[
+    New_merged_metabolomics$Mixed_Group %in% mixed_groups,
+    ,
+    drop = FALSE
+  ]
+
+Mixed_metabolomics_data$Mixed_Group <- factor(
+  Mixed_metabolomics_data$Mixed_Group,
+  levels = mixed_groups
+)
+
+# Check sample sizes
+table(
+  Mixed_metabolomics_data$Mixed_Group,
+  useNA = "ifany"
+)
+
+dim(Mixed_metabolomics_data)
+
+
+# ============================================================
+# ============================================================
+
+first_metabolite <- match(
+  "C0",
+  names(Mixed_metabolomics_data)
+)
+
+last_metabolite <- match(
+  "Choline",
+  names(Mixed_metabolomics_data)
+)
+
+if (
+  is.na(first_metabolite) ||
+  is.na(last_metabolite)
+) {
+  stop(
+    "The metabolite columns C0 or Choline could not be found."
+  )
+}
+
+metabolite_vars <- names(Mixed_metabolomics_data)[
+  first_metabolite:last_metabolite
+]
+
+# Retain numeric metabolites only
+metabolite_vars <- metabolite_vars[
+  vapply(
+    Mixed_metabolomics_data[metabolite_vars],
+    is.numeric,
+    logical(1)
+  )
+]
+
+length(metabolite_vars)
+head(metabolite_vars)
+tail(metabolite_vars)
+
+
+# ============================================================
+#
+# ============================================================
+
+pairwise_group_list <- utils::combn(
+  mixed_groups,
+  2,
+  simplify = FALSE
+)
+
+pairwise_group_list
+
+
+# ============================================================
+# ============================================================
+
+pairwise_wilcoxon_results <- purrr::map_dfr(
+  metabolite_vars,
+  function(metabolite) {
+
+    metabolite_data <- data.frame(
+      Value = Mixed_metabolomics_data[[metabolite]],
+      Group = Mixed_metabolomics_data$Mixed_Group
+    )
+
+    # Remove missing metabolite and group values
+    metabolite_data <- metabolite_data[
+      stats::complete.cases(metabolite_data),
+      ,
+      drop = FALSE
+    ]
+
+    purrr::map_dfr(
+      pairwise_group_list,
+      function(group_pair) {
+
+        group1_name <- group_pair[1]
+        group2_name <- group_pair[2]
+
+        group1_values <- metabolite_data$Value[
+          metabolite_data$Group == group1_name
+        ]
+
+        group2_values <- metabolite_data$Value[
+          metabolite_data$Group == group2_name
+        ]
+
+        # Require at least three observations in each group
+        if (
+          length(group1_values) < 3 ||
+          length(group2_values) < 3
+        ) {
+          return(NULL)
+        }
+
+        test_result <- tryCatch(
+          stats::wilcox.test(
+            x = group1_values,
+            y = group2_values,
+            alternative = "two.sided",
+            exact = FALSE,
+            paired = FALSE
+          ),
+          error = function(e) {
+            NULL
+          }
+        )
+
+        if (is.null(test_result)) {
+          return(NULL)
+        }
+
+        median_group1 <- stats::median(
+          group1_values,
+          na.rm = TRUE
+        )
+
+        median_group2 <- stats::median(
+          group2_values,
+          na.rm = TRUE
+        )
+
+        data.frame(
+          Metabolite = metabolite,
+
+          Group1 = group1_name,
+
+          Group2 = group2_name,
+
+          Comparison = paste0(
+            group1_name,
+            "_vs_",
+            group2_name
+          ),
+
+          N_Group1 = length(group1_values),
+
+          N_Group2 = length(group2_values),
+
+          Median_Group1 = median_group1,
+
+          Median_Group2 = median_group2,
+
+          Median_Difference =
+            median_group1 - median_group2,
+
+          Wilcoxon_W =
+            unname(test_result$statistic),
+
+          P_value =
+            test_result$p.value
+        )
+      }
+    )
+  }
+)
+
+
+# Check results
+dim(pairwise_wilcoxon_results)
+
+head(pairwise_wilcoxon_results)
+
+unique(
+  pairwise_wilcoxon_results$Comparison
+)
+
+
+# ============================================================
+#
+# FDR is calculated across metabolites separately for each
+# pairwise comparison.
+# ============================================================
+
+pairwise_wilcoxon_results <-
+  pairwise_wilcoxon_results |>
+  dplyr::group_by(
+    Comparison
+  ) |>
+  dplyr::mutate(
+    FDR = stats::p.adjust(
+      P_value,
+      method = "fdr"
+    )
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::arrange(
+    Comparison,
+    FDR
+  )
+
+
+# Check corrected results
+head(pairwise_wilcoxon_results)
+
+dim(pairwise_wilcoxon_results)
+
+
+# ============================================================
+# ============================================================
+
+significant_pairwise_wilcoxon <-
+  pairwise_wilcoxon_results |>
+  dplyr::filter(
+    !is.na(FDR),
+    FDR < 0.05
+  ) |>
+  dplyr::arrange(
+    FDR
+  )
+
+dim(significant_pairwise_wilcoxon)
+
+head(significant_pairwise_wilcoxon)
+
+
+# Number of unique significant metabolites
+number_unique_significant_metabolites <- length(
+  unique(
+    significant_pairwise_wilcoxon$Metabolite
+  )
+)
+
+number_unique_significant_metabolites
+
+
+# Number of significant metabolites per comparison
+significant_results_per_comparison <-
+  significant_pairwise_wilcoxon |>
+  dplyr::count(
+    Comparison,
+    name = "Number_significant_metabolites"
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(
+      Number_significant_metabolites
+    )
+  )
+
+significant_results_per_comparison
+
+
+# ============================================================
+# ============================================================
+
+utils::write.csv(
+  pairwise_wilcoxon_results,
+  file =
+    "Pairwise_Wilcoxon_Mixed_Group_Metabolite_Results.csv",
+  row.names = FALSE
+)
+
+utils::write.csv(
+  significant_pairwise_wilcoxon,
+  file =
+    "Significant_Pairwise_Wilcoxon_Metabolite_Results.csv",
+  row.names = FALSE
+)
+
+utils::write.csv(
+  significant_results_per_comparison,
+  file =
+    "Number_Significant_Metabolites_Per_Wilcoxon_Comparison.csv",
+  row.names = FALSE
+)
+
+
+# ============================================================
+# ============================================================
+
+get_significance <- function(p) {
+
+  if (is.na(p)) {
+    return("")
+  }
+
+  if (p < 0.001) {
+    return("***")
+  }
+
+  if (p < 0.01) {
+    return("**")
+  }
+
+  if (p < 0.05) {
+    return("*")
+  }
+
+  return("")
+}
+
+
+pairwise_wilcoxon_results <-
+  pairwise_wilcoxon_results |>
+  dplyr::mutate(
+    Significance = vapply(
+      FDR,
+      get_significance,
+      character(1)
+    )
+  )
+
+
+# ============================================================
+# one pairwise comparison
+# ============================================================
+
+significant_metabolite_names <-
+  pairwise_wilcoxon_results |>
+  dplyr::filter(
+    !is.na(FDR),
+    FDR < 0.05
+  ) |>
+  dplyr::distinct(
+    Metabolite
+  ) |>
+  dplyr::pull(
+    Metabolite
+  )
+
+length(significant_metabolite_names)
+
+
+# ============================================================
+# ============================================================
+
+if (
+  length(significant_metabolite_names) > 0
+) {
+
+  # Median-difference matrix
+  median_difference_data <-
+    pairwise_wilcoxon_results |>
+    dplyr::filter(
+      Metabolite %in%
+        significant_metabolite_names
+    ) |>
+    dplyr::select(
+      Metabolite,
+      Comparison,
+      Median_Difference
+    ) |>
+    tidyr::pivot_wider(
+      names_from = Comparison,
+      values_from = Median_Difference
+    )
+
+  median_difference_matrix <- as.data.frame(
+    median_difference_data
+  )
+
+  rownames(median_difference_matrix) <-
+    median_difference_matrix$Metabolite
+
+  median_difference_matrix$Metabolite <- NULL
+
+  median_difference_matrix <- as.matrix(
+    median_difference_matrix
+  )
+
+
+  # Significance-star matrix
+  significance_data <-
+    pairwise_wilcoxon_results |>
+    dplyr::filter(
+      Metabolite %in%
+        significant_metabolite_names
+    ) |>
+    dplyr::select(
+      Metabolite,
+      Comparison,
+      Significance
+    ) |>
+    tidyr::pivot_wider(
+      names_from = Comparison,
+      values_from = Significance,
+      values_fill = ""
+    )
+
+  significance_matrix <- as.data.frame(
+    significance_data
+  )
+
+  rownames(significance_matrix) <-
+    significance_matrix$Metabolite
+
+  significance_matrix$Metabolite <- NULL
+
+  significance_matrix <- as.matrix(
+    significance_matrix
+  )
+
+
+  # Match rows and columns
+  significance_matrix <-
+    significance_matrix[
+      rownames(median_difference_matrix),
+      colnames(median_difference_matrix),
+      drop = FALSE
+    ]
+
+
+  # ==========================================================
+  # ==========================================================
+
+  my_palette <- colorRampPalette(
+    c(
+      "blue",
+      "white",
+      "red"
+    )
+  )(50)
+
+  grDevices::png(
+    filename =
+      "Heatmap_Pairwise_Wilcoxon_Mixed_Group_Metabolites.png",
+    width = 16,
+    height = max(
+      8,
+      nrow(median_difference_matrix) * 0.22
+    ),
+    units = "in",
+    res = 600
+  )
+
+  pheatmap::pheatmap(
+    median_difference_matrix,
+
+    cluster_rows =
+      nrow(median_difference_matrix) > 1,
+
+    cluster_cols = FALSE,
+
+    scale = "row",
+
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+
+    display_numbers =
+      significance_matrix,
+
+    number_color = "black",
+
+    color = my_palette,
+
+    angle_col = "45",
+
+    fontsize_row = 7,
+    fontsize_col = 8,
+
+    border_color = NA,
+
+    main =
+      "Pairwise Wilcoxon Comparisons Between Mixed Etiology Groups"
+  )
+
+  grDevices::dev.off()
+
+} else {
+
+  message(
+    "No metabolites were significant after FDR correction."
+  )
+}
+
+
+# ============================================================
+# ============================================================
+
+getwd()
+```
+> group_sizes in metabolites 
+
+  M1 M1M2 M1M3   M2 M2M1 M2M3   M3 M3M1 M3M2 
+  21   27   35   16   51   22   32   38   19
+
+##compare extreme and mixed together
+```{r}
+## ============================================================
+# Pairwise Wilcoxon comparisons between extreme and mixed groups
+# ============================================================
+
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(pheatmap)
+
+
+# ============================================================
+# ============================================================
+
+all_groups <- c(
+  "M1",
+  "M1M2",
+  "M1M3",
+  "M2",
+  "M2M1",
+  "M2M3",
+  "M3",
+  "M3M1",
+  "M3M2"
+)
+
+
+# ============================================================
+# ============================================================
+
+mixed_label <- as.character(
+  New_merged_metabolomics$Mixed_Group
+)
+
+# Convert blank entries and character "NA" to actual NA
+mixed_label[
+  trimws(mixed_label) %in% c("", "NA")
+] <- NA_character_
+
+
+# ============================================================
+# ============================================================
+
+extreme_number <- trimws(
+  as.character(
+    New_merged_metabolomics$Extreme_Archetype_Number
+  )
+)
+# Values such as "Mixed Etiology" become NA
+extreme_label <- ifelse(
+  extreme_number %in% c("1", "2", "3"),
+  paste0("M", extreme_number),
+  NA_character_
+)
+
+
+# ============================================================
+#
+# Mixed participants use Mixed_Group.
+# Extreme participants use Extreme_Archetype_Number.
+# ============================================================
+
+New_merged_metabolomics$Comparison_Group <- ifelse(
+  !is.na(mixed_label),
+  mixed_label,
+  extreme_label
+)
+
+New_merged_metabolomics$Comparison_Group <- factor(
+  New_merged_metabolomics$Comparison_Group,
+  levels = all_groups
+)
+
+
+# ============================================================
+# ============================================================
+
+Extreme_mixed_metabolomics_data <-
+  New_merged_metabolomics[
+    New_merged_metabolomics$Comparison_Group %in% all_groups,
+    ,
+    drop = FALSE
+  ]
+
+Extreme_mixed_metabolomics_data$Comparison_Group <-
+  droplevels(
+    Extreme_mixed_metabolomics_data$Comparison_Group
+  )
+
+
+# Check sample sizes
+group_sizes <- table(
+  Extreme_mixed_metabolomics_data$Comparison_Group,
+  useNA = "ifany"
+)
+
+group_sizes
+
+dim(Extreme_mixed_metabolomics_data)
+
+
+# ============================================================
+# ============================================================
+
+available_groups <- levels(
+  Extreme_mixed_metabolomics_data$Comparison_Group
+)
+
+available_groups
+
+if (length(available_groups) < 2) {
+  stop("Fewer than two comparison groups are available.")
+}
+
+
+# ============================================================
+# ============================================================
+
+first_metabolite <- match(
+  "C0",
+  names(Extreme_mixed_metabolomics_data)
+)
+
+last_metabolite <- match(
+  "Choline",
+  names(Extreme_mixed_metabolomics_data)
+)
+
+if (
+  is.na(first_metabolite) ||
+  is.na(last_metabolite)
+) {
+  stop(
+    "The metabolite columns C0 or Choline could not be found."
+  )
+}
+
+metabolite_vars <- names(
+  Extreme_mixed_metabolomics_data
+)[
+  first_metabolite:last_metabolite
+]
+
+
+# Keep numeric metabolites only
+metabolite_vars <- metabolite_vars[
+  vapply(
+    Extreme_mixed_metabolomics_data[metabolite_vars],
+    is.numeric,
+    logical(1)
+  )
+]
+
+
+# Check selected metabolites
+length(metabolite_vars)
+
+head(metabolite_vars)
+
+tail(metabolite_vars)
+
+
+# ============================================================
+#
+# ============================================================
+
+pairwise_group_list <- utils::combn(
+  available_groups,
+  2,
+  simplify = FALSE
+)
+
+length(pairwise_group_list)
+
+pairwise_group_list
+
+
+# ============================================================
+# ============================================================
+
+pairwise_wilcoxon_results <- purrr::map_dfr(
+  metabolite_vars,
+  function(metabolite) {
+
+    metabolite_data <- data.frame(
+      Value =
+        Extreme_mixed_metabolomics_data[[metabolite]],
+
+      Group =
+        Extreme_mixed_metabolomics_data$Comparison_Group
+    )
+
+    # Remove missing metabolite and group observations
+    metabolite_data <- metabolite_data[
+      stats::complete.cases(metabolite_data),
+      ,
+      drop = FALSE
+    ]
+
+    metabolite_data$Group <- droplevels(
+      metabolite_data$Group
+    )
+
+    purrr::map_dfr(
+      pairwise_group_list,
+      function(group_pair) {
+
+        group1_name <- group_pair[1]
+        group2_name <- group_pair[2]
+
+        group1_values <- metabolite_data$Value[
+          metabolite_data$Group == group1_name
+        ]
+
+        group2_values <- metabolite_data$Value[
+          metabolite_data$Group == group2_name
+        ]
+
+
+        # Require at least three observations in each group
+        if (
+          length(group1_values) < 3 ||
+          length(group2_values) < 3
+        ) {
+          return(NULL)
+        }
+
+
+        test_result <- tryCatch(
+          stats::wilcox.test(
+            x = group1_values,
+            y = group2_values,
+            alternative = "two.sided",
+            paired = FALSE,
+            exact = FALSE
+          ),
+          error = function(e) {
+            NULL
+          }
+        )
+
+        if (is.null(test_result)) {
+          return(NULL)
+        }
+
+
+        median_group1 <- stats::median(
+          group1_values,
+          na.rm = TRUE
+        )
+
+        median_group2 <- stats::median(
+          group2_values,
+          na.rm = TRUE
+        )
+
+
+        data.frame(
+          Metabolite = metabolite,
+
+          Group1 = group1_name,
+
+          Group2 = group2_name,
+
+          Comparison = paste0(
+            group1_name,
+            "_vs_",
+            group2_name
+          ),
+
+          N_Group1 =
+            length(group1_values),
+
+          N_Group2 =
+            length(group2_values),
+
+          Median_Group1 =
+            median_group1,
+
+          Median_Group2 =
+            median_group2,
+
+          Median_Difference =
+            median_group1 - median_group2,
+
+          Wilcoxon_W =
+            unname(test_result$statistic),
+
+          P_value =
+            test_result$p.value
+        )
+      }
+    )
+  }
+)
+
+
+# ============================================================
+# ============================================================
+
+if (
+  is.null(pairwise_wilcoxon_results) ||
+  nrow(pairwise_wilcoxon_results) == 0
+) {
+  stop(
+    "No Wilcoxon pairwise results were generated."
+  )
+}
+
+dim(pairwise_wilcoxon_results)
+
+head(pairwise_wilcoxon_results)
+
+unique(
+  pairwise_wilcoxon_results$Comparison
+)
+
+
+# ============================================================
+#
+# FDR is calculated across metabolites separately for each
+# group-pair comparison.
+# ============================================================
+
+pairwise_wilcoxon_results <-
+  pairwise_wilcoxon_results |>
+  dplyr::group_by(
+    Comparison
+  ) |>
+  dplyr::mutate(
+    FDR = stats::p.adjust(
+      P_value,
+      method = "BH"
+    )
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::arrange(
+    Comparison,
+    FDR
+  )
+
+
+# Check corrected results
+head(pairwise_wilcoxon_results)
+
+dim(pairwise_wilcoxon_results)
+
+
+# ============================================================
+# ============================================================
+
+significant_pairwise_wilcoxon <-
+  pairwise_wilcoxon_results |>
+  dplyr::filter(
+    !is.na(FDR),
+    FDR < 0.05
+  ) |>
+  dplyr::arrange(
+    FDR
+  )
+
+
+dim(significant_pairwise_wilcoxon)
+
+head(significant_pairwise_wilcoxon)
+
+
+# Number of unique significant metabolites
+number_unique_significant_metabolites <- length(
+  unique(
+    significant_pairwise_wilcoxon$Metabolite
+  )
+)
+
+number_unique_significant_metabolites
+
+
+# Number of significant metabolites for each comparison
+significant_results_per_comparison <-
+  significant_pairwise_wilcoxon |>
+  dplyr::count(
+    Comparison,
+    name = "Number_significant_metabolites"
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(
+      Number_significant_metabolites
+    )
+  )
+
+significant_results_per_comparison
+
+
+# ============================================================
+# ============================================================
+
+utils::write.csv(
+  pairwise_wilcoxon_results,
+  file =
+    "Pairwise_Wilcoxon_Extreme_and_Mixed_Group_Metabolite_Results.csv",
+  row.names = FALSE
+)
+
+utils::write.csv(
+  significant_pairwise_wilcoxon,
+  file =
+    "Significant_Pairwise_Wilcoxon_Extreme_and_Mixed_Metabolites.csv",
+  row.names = FALSE
+)
+
+utils::write.csv(
+  significant_results_per_comparison,
+  file =
+    "Number_Significant_Metabolites_Per_Extreme_Mixed_Comparison.csv",
+  row.names = FALSE
+)
+
+
+# ============================================================
+# ============================================================
+
+get_significance <- function(p) {
+
+  if (is.na(p)) {
+    return("")
+  }
+
+  if (p < 0.001) {
+    return("***")
+  }
+
+  if (p < 0.01) {
+    return("**")
+  }
+
+  if (p < 0.05) {
+    return("*")
+  }
+
+  return("")
+}
+
+
+pairwise_wilcoxon_results <-
+  pairwise_wilcoxon_results |>
+  dplyr::mutate(
+    Significance = vapply(
+      FDR,
+      get_significance,
+      character(1)
+    )
+  )
+
+
+# ============================================================
+# one extreme/mixed comparison
+# ============================================================
+
+significant_metabolite_names <-
+  pairwise_wilcoxon_results |>
+  dplyr::filter(
+    !is.na(FDR),
+    FDR < 0.05
+  ) |>
+  dplyr::distinct(
+    Metabolite
+  ) |>
+  dplyr::pull(
+    Metabolite
+  )
+
+length(significant_metabolite_names)
+
+
+# ============================================================
+# ============================================================
+graphics.off()
+
+heatmap_height <- min(
+  max(8, nrow(median_difference_matrix) * 0.12),
+  30
+)
+
+grDevices::pdf(
+  file =
+    "Heatmap_Pairwise_Wilcoxon_Extreme_and_Mixed_Groups.pdf",
+  width = 18,
+  height = heatmap_height,
+  onefile = FALSE
+)
+
+pheatmap::pheatmap(
+  median_difference_matrix,
+
+  cluster_rows =
+    nrow(median_difference_matrix) > 1 &&
+    !anyNA(median_difference_matrix),
+
+  cluster_cols = FALSE,
+
+  scale = "none",
+
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+
+  display_numbers =
+    significance_matrix,
+
+  number_color = "black",
+
+  color = my_palette,
+
+  angle_col = "90",
+
+  fontsize_row = 5,
+  fontsize_col = 6,
+
+  border_color = NA,
+
+  na_col = "grey90",
+
+  main =
+    "Pairwise Wilcoxon Comparisons Between Extreme and Mixed Groups"
+)
+
+grDevices::dev.off()
+
+# ============================================================
+# ============================================================
+
+getwd()
+```
+ number of people in each archetypes 
+ 
+  M1 M1M2 M1M3   M2 M2M1 M2M3   M3 M3M1 M3M2 
+  45   69   82   35   81   49   63   80   45 
+#proteomics 
+```{r}
+# ============================================================
+# Pairwise Wilcoxon comparisons of proteins between
+# extreme and mixed archetype groups
+#
+# Multiple-testing correction: FDR
+# Heatmap labels:
+# ============================================================
+
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(pheatmap)
+
+
+# ============================================================
+# ============================================================
+
+find_writable_output_dir <- function() {
+
+  user_profile <- Sys.getenv("USERPROFILE")
+
+  candidate_directories <- unique(
+    c(
+      file.path(
+        user_profile,
+        "Documents",
+        "Proteomics_Wilcoxon_Results"
+      ),
+      file.path(
+        getwd(),
+        "Proteomics_Wilcoxon_Results"
+      ),
+      file.path(
+        tempdir(),
+        "Proteomics_Wilcoxon_Results"
+      )
+    )
+  )
+
+  for (directory in candidate_directories) {
+
+    try(
+      dir.create(
+        directory,
+        recursive = TRUE,
+        showWarnings = FALSE
+      ),
+      silent = TRUE
+    )
+
+    test_file <- file.path(
+      directory,
+      paste0(
+        ".write_test_",
+        Sys.getpid(),
+        ".tmp"
+      )
+    )
+
+    writable <- tryCatch(
+      {
+        created <- suppressWarnings(
+          file.create(test_file)
+        )
+
+        if (isTRUE(created)) {
+          unlink(test_file)
+          TRUE
+        } else {
+          FALSE
+        }
+      },
+      error = function(e) {
+        FALSE
+      }
+    )
+
+    if (writable) {
+      return(
+        normalizePath(
+          directory,
+          winslash = "/",
+          mustWork = TRUE
+        )
+      )
+    }
+  }
+
+  stop(
+    "R could not find or create a writable output directory."
+  )
+}
+
+
+output_dir <- find_writable_output_dir()
+
+output_dir
+
+
+# Add a timestamp to prevent conflicts with files open in Excel
+run_timestamp <- format(
+  Sys.time(),
+  "%Y%m%d_%H%M%S"
+)
+
+
+# Helper function for creating output paths
+output_path <- function(file_name) {
+
+  extension <- tools::file_ext(file_name)
+
+  base_name <- tools::file_path_sans_ext(
+    file_name
+  )
+
+  file.path(
+    output_dir,
+    paste0(
+      base_name,
+      "_",
+      run_timestamp,
+      ".",
+      extension
+    )
+  )
+}
+
+
+# ============================================================
+# ============================================================
+
+all_groups <- c(
+  "M1",
+  "M1M2",
+  "M1M3",
+  "M2",
+  "M2M1",
+  "M2M3",
+  "M3",
+  "M3M1",
+  "M3M2"
+)
+
+
+# ============================================================
+# ============================================================
+
+mixed_label <- as.character(
+  New_merged_proteomics$Mixed_Group
+)
+
+mixed_label[
+  trimws(mixed_label) %in% c("", "NA")
+] <- NA_character_
+
+
+# ============================================================
+# ============================================================
+
+extreme_number <- trimws(
+  as.character(
+    New_merged_proteomics$Extreme_Archetype_Number
+  )
+)
+extreme_label <- ifelse(
+  extreme_number %in% c("1", "2", "3"),
+  paste0("M", extreme_number),
+  NA_character_
+)
+
+
+# ============================================================
+# ============================================================
+
+New_merged_proteomics$Comparison_Group <- ifelse(
+  !is.na(mixed_label),
+  mixed_label,
+  extreme_label
+)
+
+New_merged_proteomics$Comparison_Group <- factor(
+  New_merged_proteomics$Comparison_Group,
+  levels = all_groups
+)
+
+
+# ============================================================
+# ============================================================
+
+Extreme_mixed_proteomics_data <-
+  New_merged_proteomics[
+    New_merged_proteomics$Comparison_Group %in% all_groups,
+    ,
+    drop = FALSE
+  ]
+
+Extreme_mixed_proteomics_data$Comparison_Group <-
+  droplevels(
+    Extreme_mixed_proteomics_data$Comparison_Group
+  )
+
+
+# Check group sizes
+group_sizes <- table(
+  Extreme_mixed_proteomics_data$Comparison_Group,
+  useNA = "ifany"
+)
+
+group_sizes
+
+dim(
+  Extreme_mixed_proteomics_data
+)
+
+
+# Save group sizes
+group_sizes_table <- data.frame(
+  Group = names(group_sizes),
+  N = as.vector(group_sizes)
+)
+
+group_sizes_file <- output_path(
+  "Proteomics_Group_Sample_Sizes.csv"
+)
+
+utils::write.csv(
+  group_sizes_table,
+  file = group_sizes_file,
+  row.names = FALSE
+)
+
+
+# ============================================================
+# ============================================================
+
+available_groups <- levels(
+  Extreme_mixed_proteomics_data$Comparison_Group
+)
+
+available_groups
+
+if (length(available_groups) < 2) {
+  stop(
+    "Fewer than two comparison groups are available."
+  )
+}
+
+number_of_group_comparisons <- choose(
+  length(available_groups),
+  2
+)
+
+number_of_group_comparisons
+
+
+# ============================================================
+# ============================================================
+
+non_protein_cols <- c(
+  # Identification variables
+  "u3n_prot_OmicEra_ff4",
+  "u3n_metabBiocrP500_ff4",
+
+  # Clinical variables
+  "u3talteru",
+  "u3csex",
+  "u3tgewi",
+  "u3tgroe",
+  "u3tbmi",
+  "u3tbmiwho",
+  "u3twhrat",
+  "u3twhratc",
+  "u3tsysmm",
+  "u3tdiamm",
+  "u3twhoish",
+  "u3tglukfastn",
+  "u3tgluk2n",
+  "u3tdm110y15",
+  "u3tinsfastn",
+  "u3tins2n",
+  "u3thoma2_b",
+  "u3thoma2_s",
+  "u3thoma2_ir",
+  "u3tquickin",
+  "u3lk_choln",
+  "u3lk_hdln",
+  "u3lk_ldln",
+  "u3lk_trin",
+  "u3lk_krean",
+  "u3l_hbavn",
+  "u3h_crp",
+  "u3tmsidfup",
+
+  # Archetype variables
+  "Archetypes 1",
+  "Archetypes 2",
+  "Archetypes 3",
+
+  # Group variables
+  "Extreme_Archetype_Number",
+  "Mixed_Group",
+  "Comparison_Group"
+)
+
+
+# ============================================================
+# ============================================================
+
+candidate_protein_vars <- setdiff(
+  names(Extreme_mixed_proteomics_data),
+  non_protein_cols
+)
+
+# Keep numeric columns only
+protein_vars <- candidate_protein_vars[
+  vapply(
+    Extreme_mixed_proteomics_data[
+      candidate_protein_vars
+    ],
+    is.numeric,
+    logical(1)
+  )
+]
+
+
+# Check selected proteins
+length(protein_vars)
+
+head(
+  protein_vars,
+  20
+)
+
+tail(
+  protein_vars,
+  20
+)
+
+
+if (length(protein_vars) == 0) {
+  stop(
+    paste(
+      "No numeric protein variables were identified.",
+      "Check the columns in New_merged_proteomics."
+    )
+  )
+}
+
+
+selected_proteins_file <- output_path(
+  "Selected_Protein_Variables.csv"
+)
+
+utils::write.csv(
+  data.frame(
+    Protein = protein_vars
+  ),
+  file = selected_proteins_file,
+  row.names = FALSE
+)
+
+
+# ============================================================
+# ============================================================
+
+pairwise_group_list <- utils::combn(
+  available_groups,
+  2,
+  simplify = FALSE
+)
+
+length(pairwise_group_list)
+
+pairwise_group_list
+
+
+# ============================================================
+# ============================================================
+
+pairwise_protein_wilcoxon_results <- purrr::map_dfr(
+  protein_vars,
+  function(protein) {
+
+    protein_data <- data.frame(
+      Value =
+        Extreme_mixed_proteomics_data[[protein]],
+
+      Group =
+        Extreme_mixed_proteomics_data$Comparison_Group
+    )
+
+    # Remove missing protein values and missing group labels
+    protein_data <- protein_data[
+      stats::complete.cases(protein_data),
+      ,
+      drop = FALSE
+    ]
+
+    protein_data$Group <- droplevels(
+      protein_data$Group
+    )
+
+
+    purrr::map_dfr(
+      pairwise_group_list,
+      function(group_pair) {
+
+        group1_name <- group_pair[1]
+        group2_name <- group_pair[2]
+
+        group1_values <- protein_data$Value[
+          protein_data$Group == group1_name
+        ]
+
+        group2_values <- protein_data$Value[
+          protein_data$Group == group2_name
+        ]
+
+
+        # Require at least three observations per group
+        if (
+          length(group1_values) < 3 ||
+          length(group2_values) < 3
+        ) {
+          return(NULL)
+        }
+
+
+        # Skip proteins with no variation across the two groups
+        if (
+          length(
+            unique(
+              c(
+                group1_values,
+                group2_values
+              )
+            )
+          ) < 2
+        ) {
+          return(NULL)
+        }
+
+
+        test_result <- tryCatch(
+          stats::wilcox.test(
+            x = group1_values,
+            y = group2_values,
+            alternative = "two.sided",
+            paired = FALSE,
+            exact = FALSE
+          ),
+          error = function(e) {
+            NULL
+          }
+        )
+
+
+        if (is.null(test_result)) {
+          return(NULL)
+        }
+
+
+        median_group1 <- stats::median(
+          group1_values,
+          na.rm = TRUE
+        )
+
+        median_group2 <- stats::median(
+          group2_values,
+          na.rm = TRUE
+        )
+
+
+        data.frame(
+          Protein = protein,
+
+          Group1 = group1_name,
+
+          Group2 = group2_name,
+
+          Comparison = paste0(
+            group1_name,
+            "_vs_",
+            group2_name
+          ),
+
+          N_Group1 =
+            length(group1_values),
+
+          N_Group2 =
+            length(group2_values),
+
+          Median_Group1 =
+            median_group1,
+
+          Median_Group2 =
+            median_group2,
+
+          Median_Difference =
+            median_group1 - median_group2,
+
+          Wilcoxon_W =
+            unname(test_result$statistic),
+
+          P_value =
+            test_result$p.value,
+
+          stringsAsFactors = FALSE
+        )
+      }
+    )
+  }
+)
+
+
+# ============================================================
+# ============================================================
+
+if (
+  is.null(pairwise_protein_wilcoxon_results) ||
+  nrow(pairwise_protein_wilcoxon_results) == 0
+) {
+  stop(
+    "No pairwise Wilcoxon protein results were generated."
+  )
+}
+
+
+dim(
+  pairwise_protein_wilcoxon_results
+)
+
+head(
+  pairwise_protein_wilcoxon_results
+)
+
+unique(
+  pairwise_protein_wilcoxon_results$Comparison
+)
+
+
+# ============================================================
+#
+# FDR is calculated across proteins separately for each
+# pairwise comparison.
+#
+# method = "fdr" is the Benjamini-Hochberg procedure.
+# ============================================================
+
+pairwise_protein_wilcoxon_results <-
+  pairwise_protein_wilcoxon_results |>
+  dplyr::group_by(
+    Comparison
+  ) |>
+  dplyr::mutate(
+    FDR = stats::p.adjust(
+      P_value,
+      method = "fdr"
+    )
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::arrange(
+    Comparison,
+    FDR
+  )
+
+
+head(
+  pairwise_protein_wilcoxon_results
+)
+
+dim(
+  pairwise_protein_wilcoxon_results
+)
+
+
+# ============================================================
+# ============================================================
+
+significant_pairwise_proteins <-
+  pairwise_protein_wilcoxon_results |>
+  dplyr::filter(
+    !is.na(FDR),
+    FDR < 0.05
+  ) |>
+  dplyr::arrange(
+    FDR
+  )
+
+
+dim(
+  significant_pairwise_proteins
+)
+
+head(
+  significant_pairwise_proteins
+)
+
+
+number_unique_significant_proteins <- length(
+  unique(
+    significant_pairwise_proteins$Protein
+  )
+)
+
+number_unique_significant_proteins
+
+
+# Number of significant proteins per comparison
+significant_proteins_per_comparison <-
+  significant_pairwise_proteins |>
+  dplyr::count(
+    Comparison,
+    name = "Number_significant_proteins"
+  ) |>
+  dplyr::arrange(
+    dplyr::desc(
+      Number_significant_proteins
+    )
+  )
+
+significant_proteins_per_comparison
+
+
+# ============================================================
+# ============================================================
+
+all_results_file <- output_path(
+  "Pairwise_Wilcoxon_Extreme_and_Mixed_Group_Protein_Results.csv"
+)
+
+significant_results_file <- output_path(
+  "Significant_Pairwise_Wilcoxon_Extreme_and_Mixed_Proteins.csv"
+)
+
+comparison_counts_file <- output_path(
+  "Number_Significant_Proteins_Per_Extreme_Mixed_Comparison.csv"
+)
+
+
+utils::write.csv(
+  pairwise_protein_wilcoxon_results,
+  file = all_results_file,
+  row.names = FALSE
+)
+
+utils::write.csv(
+  significant_pairwise_proteins,
+  file = significant_results_file,
+  row.names = FALSE
+)
+
+utils::write.csv(
+  significant_proteins_per_comparison,
+  file = comparison_counts_file,
+  row.names = FALSE
+)
+
+
+# ============================================================
+# ============================================================
+
+get_significance <- function(p) {
+
+  if (is.na(p)) {
+    return("")
+  } else if (p < 0.001) {
+    return("***")
+  } else if (p < 0.01) {
+    return("**")
+  } else if (p < 0.05) {
+    return("*")
+  } else {
+    return("")
+  }
+}
+
+
+pairwise_protein_wilcoxon_results <-
+  pairwise_protein_wilcoxon_results |>
+  dplyr::mutate(
+    Significance = vapply(
+      FDR,
+      get_significance,
+      character(1)
+    )
+  )
+
+
+# ============================================================
+#
+# ============================================================
+
+max_heatmap_proteins <- 100
+
+
+ranked_significant_proteins <-
+  pairwise_protein_wilcoxon_results |>
+  dplyr::group_by(
+    Protein
+  ) |>
+  dplyr::summarise(
+    Minimum_FDR = suppressWarnings(
+      min(
+        FDR,
+        na.rm = TRUE
+      )
+    ),
+    .groups = "drop"
+  ) |>
+  dplyr::mutate(
+    Minimum_FDR = ifelse(
+      is.infinite(Minimum_FDR),
+      NA_real_,
+      Minimum_FDR
+    )
+  ) |>
+  dplyr::filter(
+    !is.na(Minimum_FDR),
+    Minimum_FDR < 0.05
+  ) |>
+  dplyr::arrange(
+    Minimum_FDR
+  )
+
+
+heatmap_protein_names <- utils::head(
+  ranked_significant_proteins$Protein,
+  max_heatmap_proteins
+)
+
+length(
+  heatmap_protein_names
+)
+
+
+# ============================================================
+# ============================================================
+
+if (length(heatmap_protein_names) > 0) {
+
+  # ----------------------------------------------------------
+  # Median-difference matrix
+  # ----------------------------------------------------------
+
+  median_difference_data <-
+    pairwise_protein_wilcoxon_results |>
+    dplyr::filter(
+      Protein %in% heatmap_protein_names
+    ) |>
+    dplyr::select(
+      Protein,
+      Comparison,
+      Median_Difference
+    ) |>
+    tidyr::pivot_wider(
+      names_from = Comparison,
+      values_from = Median_Difference
+    )
+
+
+  median_difference_matrix <- as.data.frame(
+    median_difference_data
+  )
+
+  rownames(median_difference_matrix) <-
+    median_difference_matrix$Protein
+
+  median_difference_matrix$Protein <- NULL
+
+  median_difference_matrix <- as.matrix(
+    median_difference_matrix
+  )
+
+
+  # Order proteins according to minimum FDR
+  desired_row_order <- heatmap_protein_names[
+    heatmap_protein_names %in%
+      rownames(median_difference_matrix)
+  ]
+
+  median_difference_matrix <-
+    median_difference_matrix[
+      desired_row_order,
+      ,
+      drop = FALSE
+    ]
+
+
+  # ----------------------------------------------------------
+  # Significance-star matrix
+  # ----------------------------------------------------------
+
+  significance_data <-
+    pairwise_protein_wilcoxon_results |>
+    dplyr::filter(
+      Protein %in% heatmap_protein_names
+    ) |>
+    dplyr::select(
+      Protein,
+      Comparison,
+      Significance
+    ) |>
+    tidyr::pivot_wider(
+      names_from = Comparison,
+      values_from = Significance,
+      values_fill = ""
+    )
+
+
+  significance_matrix <- as.data.frame(
+    significance_data
+  )
+
+  rownames(significance_matrix) <-
+    significance_matrix$Protein
+
+  significance_matrix$Protein <- NULL
+
+  significance_matrix <- as.matrix(
+    significance_matrix
+  )
+
+
+  # Match rows and columns between matrices
+  significance_matrix <-
+    significance_matrix[
+      rownames(median_difference_matrix),
+      colnames(median_difference_matrix),
+      drop = FALSE
+    ]
+
+
+  # ==========================================================
+  #
+  # Example:
+  # ==========================================================
+
+  protein_short_names <- sub(
+    pattern = "^(?:sp|tr)_[^_]+_([^_]+)_.*$",
+    replacement = "\\1",
+    x = rownames(median_difference_matrix),
+    perl = TRUE
+  )
+
+
+  # Check the conversion
+  protein_name_mapping <- data.frame(
+    Full_name =
+      rownames(median_difference_matrix),
+
+    Short_name =
+      protein_short_names,
+
+    stringsAsFactors = FALSE
+  )
+
+  head(
+    protein_name_mapping,
+    20
+  )
+
+
+  protein_mapping_file <- output_path(
+    "Protein_Full_and_Short_Name_Mapping.csv"
+  )
+
+  utils::write.csv(
+    protein_name_mapping,
+    file = protein_mapping_file,
+    row.names = FALSE
+  )
+
+
+  # ==========================================================
+  # ==========================================================
+
+  maximum_absolute_difference <- suppressWarnings(
+    max(
+      abs(median_difference_matrix),
+      na.rm = TRUE
+    )
+  )
+
+
+  if (
+    !is.finite(maximum_absolute_difference) ||
+    maximum_absolute_difference == 0
+  ) {
+    maximum_absolute_difference <- 1
+  }
+
+
+  my_palette <- colorRampPalette(
+    c(
+      "blue",
+      "white",
+      "red"
+    )
+  )(50)
+
+
+  heatmap_breaks <- seq(
+    -maximum_absolute_difference,
+    maximum_absolute_difference,
+    length.out = 51
+  )
+
+
+  # ==========================================================
+  # ==========================================================
+
+  graphics.off()
+
+
+  heatmap_height <- min(
+    max(
+      8,
+      nrow(median_difference_matrix) * 0.18
+    ),
+    30
+  )
+
+
+  heatmap_file <- output_path(
+    "Heatmap_Pairwise_Wilcoxon_Extreme_and_Mixed_Proteomics.pdf"
+  )
+
+
+  grDevices::pdf(
+    file = heatmap_file,
+    width = 22,
+    height = heatmap_height,
+    onefile = FALSE
+  )
+
+
+  pheatmap::pheatmap(
+    median_difference_matrix,
+
+    cluster_rows =
+      nrow(median_difference_matrix) > 1 &&
+      !anyNA(median_difference_matrix),
+
+    cluster_cols = FALSE,
+
+    scale = "none",
+
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+
+    # Display short protein names such as APOF
+    labels_row =
+      protein_short_names,
+
+    display_numbers =
+      significance_matrix,
+
+    number_color = "black",
+
+    color = my_palette,
+
+    breaks = heatmap_breaks,
+
+    angle_col = "90",
+
+    fontsize_row = 6,
+    fontsize_col = 6,
+
+    border_color = NA,
+
+    na_col = "grey90",
+
+    main =
+      "Pairwise Wilcoxon Comparisons of Proteins Between Extreme and Mixed Groups"
+  )
+
+
+  grDevices::dev.off()
+
+
+} else {
+
+  message(
+    "No proteins were significant after FDR correction."
+  )
+}
+
+
+# ============================================================
+# ============================================================
+
+cat(
+  "\nResults were saved in:\n",
+  output_dir,
+  "\n\n"
+)
+
+cat(
+  "Group sizes:\n",
+  group_sizes_file,
+  "\n\n"
+)
+
+cat(
+  "Selected proteins:\n",
+  selected_proteins_file,
+  "\n\n"
+)
+
+cat(
+  "Complete Wilcoxon results:\n",
+  all_results_file,
+  "\n\n"
+)
+
+cat(
+  "Significant protein results:\n",
+  significant_results_file,
+  "\n\n"
+)
+
+cat(
+  "Significant counts per comparison:\n",
+  comparison_counts_file,
+  "\n\n"
+)
+
+if (exists("protein_mapping_file")) {
+  cat(
+    "Protein name mapping:\n",
+    protein_mapping_file,
+    "\n\n"
+  )
+}
+
+if (exists("heatmap_file")) {
+  cat(
+    "Heatmap:\n",
+    heatmap_file,
+    "\n"
+  )
+}
+getwd()
+```
+```{r}
+# ============================================================
+# ============================================================
+
+if (length(heatmap_protein_names) > 0) {
+
+  # ----------------------------------------------------------
+  # Median-difference matrix
+  # ----------------------------------------------------------
+
+  median_difference_data <-
+    pairwise_protein_wilcoxon_results |>
+    dplyr::filter(
+      Protein %in% heatmap_protein_names
+    ) |>
+    dplyr::select(
+      Protein,
+      Comparison,
+      Median_Difference
+    ) |>
+    tidyr::pivot_wider(
+      names_from = Comparison,
+      values_from = Median_Difference
+    )
+
+  median_difference_matrix <- as.data.frame(
+    median_difference_data
+  )
+
+  rownames(median_difference_matrix) <-
+    median_difference_matrix$Protein
+
+  median_difference_matrix$Protein <- NULL
+
+  median_difference_matrix <- as.matrix(
+    median_difference_matrix
+  )
+
+
+  # Order proteins by minimum FDR
+  desired_row_order <- heatmap_protein_names[
+    heatmap_protein_names %in%
+      rownames(median_difference_matrix)
+  ]
+
+  median_difference_matrix <-
+    median_difference_matrix[
+      desired_row_order,
+      ,
+      drop = FALSE
+    ]
+
+
+  # ----------------------------------------------------------
+  # Significance-star matrix
+  # ----------------------------------------------------------
+
+  significance_data <-
+    pairwise_protein_wilcoxon_results |>
+    dplyr::filter(
+      Protein %in% heatmap_protein_names
+    ) |>
+    dplyr::select(
+      Protein,
+      Comparison,
+      Significance
+    ) |>
+    tidyr::pivot_wider(
+      names_from = Comparison,
+      values_from = Significance,
+      values_fill = ""
+    )
+
+  significance_matrix <- as.data.frame(
+    significance_data
+  )
+
+  rownames(significance_matrix) <-
+    significance_matrix$Protein
+
+  significance_matrix$Protein <- NULL
+
+  significance_matrix <- as.matrix(
+    significance_matrix
+  )
+
+
+  # Match the row and column order
+  significance_matrix <-
+    significance_matrix[
+      rownames(median_difference_matrix),
+      colnames(median_difference_matrix),
+      drop = FALSE
+    ]
+
+
+  # ==========================================================
+  #
+  # Supported examples:
+  #
+  # All become APOF.
+  # ==========================================================
+
+  extract_protein_symbol <- function(protein_name) {
+
+    vapply(
+      protein_name,
+      function(current_name) {
+
+        # Remove surrounding backticks if present
+        current_name <- gsub(
+          "^`|`$",
+          "",
+          current_name
+        )
+
+        # Remove an optional X added by make.names()
+        current_name <- sub(
+          pattern = "^X(?=(sp|tr)[._|])",
+          replacement = "",
+          x = current_name,
+          perl = TRUE,
+          ignore.case = TRUE
+        )
+
+        # Split names using underscore, pipe or dot
+        name_parts <- strsplit(
+          current_name,
+          split = "[_|.]"
+        )[[1]]
+
+        name_parts <- name_parts[
+          nzchar(name_parts)
+        ]
+
+        # UniProt format:
+        if (
+          length(name_parts) >= 3 &&
+          tolower(name_parts[1]) %in% c("sp", "tr")
+        ) {
+          return(name_parts[3])
+        }
+
+        # Keep original name when it does not follow
+        # the expected UniProt format
+        current_name
+      },
+      character(1)
+    )
+  }
+
+
+  protein_short_names <- extract_protein_symbol(
+    rownames(median_difference_matrix)
+  )
+
+
+  # Confirm that the number of labels is correct
+  stopifnot(
+    length(protein_short_names) ==
+      nrow(median_difference_matrix)
+  )
+
+
+  # Check the conversion
+  protein_name_mapping <- data.frame(
+    Full_name =
+      rownames(median_difference_matrix),
+
+    Short_name =
+      protein_short_names,
+
+    stringsAsFactors = FALSE
+  )
+
+  print(
+    head(
+      protein_name_mapping,
+      20
+    )
+  )
+
+
+  protein_mapping_file <- output_path(
+    "Protein_Full_and_Short_Name_Mapping.csv"
+  )
+
+  utils::write.csv(
+    protein_name_mapping,
+    file = protein_mapping_file,
+    row.names = FALSE
+  )
+
+
+  # ==========================================================
+  # ==========================================================
+
+  maximum_absolute_difference <- suppressWarnings(
+    max(
+      abs(median_difference_matrix),
+      na.rm = TRUE
+    )
+  )
+
+  if (
+    !is.finite(maximum_absolute_difference) ||
+    maximum_absolute_difference == 0
+  ) {
+    maximum_absolute_difference <- 1
+  }
+
+
+  my_palette <- grDevices::colorRampPalette(
+    c(
+      "blue",
+      "white",
+      "red"
+    )
+  )(50)
+
+
+  heatmap_breaks <- seq(
+    -maximum_absolute_difference,
+    maximum_absolute_difference,
+    length.out = 51
+  )
+
+
+  # ==========================================================
+  # ==========================================================
+
+  graphics.off()
+
+
+  heatmap_height <- min(
+    max(
+      8,
+      nrow(median_difference_matrix) * 0.18
+    ),
+    30
+  )
+
+
+  heatmap_file <- output_path(
+    "Heatmap_Pairwise_Wilcoxon_Extreme_and_Mixed_Proteomics.pdf"
+  )
+
+
+  grDevices::pdf(
+    file = heatmap_file,
+    width = 22,
+    height = heatmap_height,
+    onefile = FALSE
+  )
+
+
+  pheatmap::pheatmap(
+    mat = median_difference_matrix,
+
+    cluster_rows =
+      nrow(median_difference_matrix) > 1 &&
+      !anyNA(median_difference_matrix),
+
+    cluster_cols = FALSE,
+
+    scale = "none",
+
+    show_rownames = TRUE,
+    show_colnames = TRUE,
+
+    # This forces the displayed labels to be APOF, APOB, etc.
+    labels_row = protein_short_names,
+
+    display_numbers = significance_matrix,
+
+    number_color = "black",
+
+    color = my_palette,
+
+    breaks = heatmap_breaks,
+
+    angle_col = "90",
+
+    fontsize_row = 7,
+    fontsize_col = 6,
+
+    border_color = NA,
+
+    na_col = "grey90",
+
+    main =
+      "Pairwise Wilcoxon Comparisons of Proteins Between Extreme and Mixed Groups"
+  )
+
+
+  grDevices::dev.off()
+
+  message(
+    "Heatmap saved to: ",
+    heatmap_file
+  )
+
+} else {
+
+  message(
+    "No proteins were significant after FDR correction."
+  )
+}
+
+
+# ============================================================
+# ============================================================
+
+cat(
+  "\nResults were saved in:\n",
+  output_dir,
+  "\n\n"
+)
+
+cat(
+  "Group sizes:\n",
+  group_sizes_file,
+  "\n\n"
+)
+
+cat(
+  "Selected proteins:\n",
+  selected_proteins_file,
+  "\n\n"
+)
+
+cat(
+  "Complete Wilcoxon results:\n",
+  all_results_file,
+  "\n\n"
+)
+
+cat(
+  "Significant protein results:\n",
+  significant_results_file,
+  "\n\n"
+)
+
+cat(
+  "Significant counts per comparison:\n",
+  comparison_counts_file,
+  "\n\n"
+)
+
+if (exists("protein_mapping_file")) {
+
+  cat(
+    "Protein-name mapping:\n",
+    protein_mapping_file,
+    "\n\n"
+  )
+}
+
+if (exists("heatmap_file")) {
+
+  cat(
+    "Heatmap:\n",
+    heatmap_file,
+    "\n"
+  )
+}
+
+cat(
+  "\nAll files were saved in:\n",
+  normalizePath(
+    output_dir,
+    winslash = "/",
+    mustWork = FALSE
+  ),
+  "\n"
+)
+
+print(
+  list.files(
+    output_dir,
+    full.names = TRUE
+  )
+)
+```
+
+
+
+#check the statistical power
+```{r}
+library(tidyverse)
+library(pwr)
+metabolomics_counts <- c(
+  M1 = 21, M1M2 = 27, M1M3 = 35, 
+  M2 = 16, M2M1 = 51, M2M3 = 22, 
+  M3 = 32, M3M1 = 38, M3M2 = 19
+)
+
+proteomics_counts <- c(
+  M1 = 45, M1M2 = 69, M1M3 = 82, 
+  M2 = 35, M2M1 = 81, M2M3 = 49, 
+  M3 = 63, M3M1 = 80, M3M2 = 45
+)
+generate_power_table <- function(group_counts) {
+  groups <- names(group_counts)
+  comparisons <- combn(groups, 2, simplify = FALSE)
+  
+  # Loop through comparisons and calculate power metrics
+  map_dfr(comparisons, function(pair) {
+    g1 <- pair[1]
+    g2 <- pair[2]
+    n1 <- group_counts[[g1]]
+    n2 <- group_counts[[g2]]
+    p_03 <- pwr.t2n.test(n1 = n1, n2 = n2, d = 0.3, sig.level = 0.05, alternative = "two.sided")$power
+    p_05 <- pwr.t2n.test(n1 = n1, n2 = n2, d = 0.5, sig.level = 0.05, alternative = "two.sided")$power
+    p_08 <- pwr.t2n.test(n1 = n1, n2 = n2, d = 0.8, sig.level = 0.05, alternative = "two.sided")$power
+    min_d <- pwr.t2n.test(n1 = n1, n2 = n2, power = 0.8, sig.level = 0.05, alternative = "two.sided")$d
+    
+    # Return a single row tibble
+    tibble(
+      Comparison = paste0(g1, "_vs_", g2),
+      Group1 = g1,
+      Group2 = g2,
+      N_Group1 = n1,
+      N_Group2 = n2,
+      Power_d_0.3 = round(p_03, 3),
+      Power_d_0.5 = round(p_05, 3),
+      Power_d_0.8 = round(p_08, 3),
+      Minimum_effect_for_80_percent_power = round(min_d, 3)
+    )
+  }) %>%
+    # Sort the table so the most powerful comparisons are at the top
+    arrange(desc(Power_d_0.5))
+}
+metabolomics_power <- generate_power_table(metabolomics_counts)
+proteomics_power   <- generate_power_table(proteomics_counts)
+print(metabolomics_power, n = 36)
+print(proteomics_power, n = 36)
+```
+
+
+ Each extreme/mixed group versus all other groups combined in metabolomics
+```{r}
+# ============================================================
+# Wilcoxon comparisons:
+# Each extreme/mixed group versus all other groups combined
+# ============================================================
+# ============================================================
+# Metabolomics analysis:
+# Each extreme/mixed group versus all other groups combined
+#
+# Statistical test: Wilcoxon rank-sum test
+# Multiple-testing correction: FDR
+# ============================================================
+
+library(dplyr)
+library(purrr)
+library(tidyr)
+library(pheatmap)
+
+
+# ============================================================
+# ============================================================
+
+output_dir <- paste0(
+  Sys.getenv("KORA_RUN_DIR"),
+  "Papers/Soft Clustering Project/",
+  "Soft clustering of KORA-FF4.Homa/",
+  "Manuscript/Final_Homa/Metabolites/",
+  "Material for Sapna"
+)
+
+
+# Create the folder if it does not already exist
+dir.create(
+  output_dir,
+  recursive = TRUE,
+  showWarnings = FALSE
+)
+
+
+# Confirm that the folder exists
+if (!dir.exists(output_dir)) {
+  stop(
+    paste(
+      "The output folder could not be created:",
+      output_dir
+    )
+  )
+}
+
+
+# Check whether R can write to this folder
+write_test_file <- file.path(
+  output_dir,
+  paste0(
+    ".R_write_test_",
+    Sys.getpid(),
+    ".tmp"
+  )
+)
+
+
+write_test_success <- tryCatch(
+  {
+    writeLines(
+      "R write-permission test",
+      con = write_test_file
+    )
+
+    unlink(write_test_file)
+
+    TRUE
+  },
+  error = function(e) {
+    FALSE
+  }
+)
+
+
+if (!write_test_success) {
+  stop(
+    paste(
+      "R cannot write to the selected output folder.",
+      "Check OneDrive permissions or whether the folder is open/locked.",
+      output_dir,
+      sep = "\n"
+    )
+  )
+}
+
+
+# Add a timestamp to avoid overwriting files
+# or conflicts with files open in Excel
+run_timestamp <- format(
+  Sys.time(),
+  "%Y%m%d_%H%M%S"
+)
+
+
+# Function for constructing output filenames
+output_path <- function(file_name) {
+
+  file_extension <- tools::file_ext(
+    file_name
+  )
+
+  file_base <- tools::file_path_sans_ext(
+    file_name
+  )
+
+  file.path(
+    output_dir,
+    paste0(
+      file_base,
+      "_",
+      run_timestamp,
+      ".",
+      file_extension
+    )
+  )
+}
+
+
+cat(
+  "\nResults will be saved in:\n",
+  normalizePath(
+    output_dir,
+    winslash = "/",
+    mustWork = FALSE
+  ),
+  "\n\n"
+)
+
+
+# ============================================================
+# ============================================================
+
+all_groups <- c(
+  "M1",
+  "M1M2",
+  "M1M3",
+  "M2",
+  "M2M1",
+  "M2M3",
+  "M3",
+  "M3M1",
+  "M3M2"
+)
+
+
+# ============================================================
+# ============================================================
+
+mixed_label <- as.character(
+  New_merged_metabolomics$Mixed_Group
+)
+
+mixed_label <- trimws(
+  mixed_label
+)
+
+
+# Convert blank strings and text representations of NA
+# to actual missing values
+mixed_label[
+  mixed_label %in% c(
+    "",
+    "NA",
+    "NaN",
+    "N/A"
+  )
+] <- NA_character_
+
+
+# ============================================================
+# ============================================================
+
+extreme_number <- trimws(
+  as.character(
+    New_merged_metabolomics$Extreme_Archetype_Number
+  )
+)
+
+
+# Convert extreme archetype numbers:
+extreme_label <- ifelse(
+  extreme_number %in% c(
+    "1",
+    "2",
+    "3"
+  ),
+  paste0(
+    "M",
+    extreme_number
+  ),
+  NA_character_
+)
+
+
+# ============================================================
+# ============================================================
+
+New_merged_metabolomics$Comparison_Group <- ifelse(
+  !is.na(mixed_label),
+  mixed_label,
+  extreme_label
+)
+
+
+New_merged_metabolomics$Comparison_Group <- factor(
+  New_merged_metabolomics$Comparison_Group,
+  levels = all_groups
+)
+
+
+# ============================================================
+# ============================================================
+
+group_vs_rest_data <-
+  New_merged_metabolomics |>
+  dplyr::filter(
+    Comparison_Group %in% all_groups
+  )
+
+
+group_vs_rest_data$Comparison_Group <- droplevels(
+  group_vs_rest_data$Comparison_Group
+)
+
+
+# Check sample sizes
+group_sizes <- table(
+  group_vs_rest_data$Comparison_Group,
+  useNA = "ifany"
+)
+
+print(
+  group_sizes
+)
+
+
+available_groups <- levels(
+  group_vs_rest_data$Comparison_Group
+)
+
+print(
+  available_groups
+)
+
+
+if (length(available_groups) < 2) {
+  stop(
+    "Fewer than two comparison groups are available."
+  )
+}
+
+
+# Save group sample sizes
+group_sizes_table <- data.frame(
+  Group = names(group_sizes),
+  N = as.vector(group_sizes),
+  stringsAsFactors = FALSE
+)
+
+
+group_sizes_file <- output_path(
+  "Metabolomics_Group_Sample_Sizes.csv"
+)
+
+
+utils::write.csv(
+  group_sizes_table,
+  file = group_sizes_file,
+  row.names = FALSE
+)
+
+
+# ============================================================
+# ============================================================
+
+first_metabolite <- match(
+  "C0",
+  names(group_vs_rest_data)
+)
+
+last_metabolite <- match(
+  "Choline",
+  names(group_vs_rest_data)
+)
+
+
+if (
+  is.na(first_metabolite) ||
+  is.na(last_metabolite)
+) {
+  stop(
+    paste(
+      "The metabolite columns could not be identified.",
+      "Check that C0 and Choline exist in the dataset."
+    )
+  )
+}
+
+
+if (first_metabolite > last_metabolite) {
+  stop(
+    "The C0 column occurs after the Choline column."
+  )
+}
+
+
+metabolite_vars <- names(
+  group_vs_rest_data
+)[
+  first_metabolite:last_metabolite
+]
+
+
+# Retain only numeric metabolite columns
+metabolite_vars <- metabolite_vars[
+  vapply(
+    group_vs_rest_data[
+      metabolite_vars
+    ],
+    is.numeric,
+    logical(1)
+  )
+]
+
+
+if (length(metabolite_vars) == 0) {
+  stop(
+    "No numeric metabolite variables were identified."
+  )
+}
+
+
+cat(
+  "Number of metabolites selected:",
+  length(metabolite_vars),
+  "\n\n"
+)
+
+
+print(
+  head(
+    metabolite_vars,
+    10
+  )
+)
+
+
+print(
+  tail(
+    metabolite_vars,
+    10
+  )
+)
+
+
+selected_metabolites_file <- output_path(
+  "Selected_Metabolite_Variables.csv"
+)
+
+
+utils::write.csv(
+  data.frame(
+    Metabolite = metabolite_vars,
+    stringsAsFactors = FALSE
+  ),
+  file = selected_metabolites_file,
+  row.names = FALSE
+)
+
+
+# ============================================================
+# ============================================================
+
+group_vs_rest_results <- purrr::map_dfr(
+  metabolite_vars,
+  function(metabolite) {
+
+    metabolite_data <- data.frame(
+      Value =
+        group_vs_rest_data[[metabolite]],
+
+      Group =
+        group_vs_rest_data$Comparison_Group
+    )
+
+
+    # Remove missing groups and missing/non-finite values
+    metabolite_data <- metabolite_data[
+      !is.na(metabolite_data$Group) &
+        is.finite(metabolite_data$Value),
+      ,
+      drop = FALSE
+    ]
+
+
+    metabolite_data$Group <- droplevels(
+      metabolite_data$Group
+    )
+
+
+    purrr::map_dfr(
+      available_groups,
+      function(current_group) {
+
+        # Values in the current group
+        group1_values <- metabolite_data$Value[
+          metabolite_data$Group == current_group
+        ]
+
+
+        # Values in all other eight groups combined
+        group2_values <- metabolite_data$Value[
+          metabolite_data$Group != current_group
+        ]
+
+
+        comparison_name <- paste0(
+          current_group,
+          "_vs_All_Other_Groups"
+        )
+
+
+        # Require at least three observations
+        if (
+          length(group1_values) < 3 ||
+          length(group2_values) < 3
+        ) {
+          return(
+            data.frame(
+              Metabolite = metabolite,
+              Group = current_group,
+              Comparison = comparison_name,
+              N_Group = length(group1_values),
+              N_Other_Groups = length(group2_values),
+              Median_Group = NA_real_,
+              Median_Other_Groups = NA_real_,
+              Median_Difference = NA_real_,
+              Wilcoxon_W = NA_real_,
+              P_value = NA_real_,
+              stringsAsFactors = FALSE
+            )
+          )
+        }
+
+
+        median_group <- stats::median(
+          group1_values,
+          na.rm = TRUE
+        )
+
+        median_other_groups <- stats::median(
+          group2_values,
+          na.rm = TRUE
+        )
+
+
+        # Skip the test if there is no variation
+        if (
+          length(
+            unique(
+              c(
+                group1_values,
+                group2_values
+              )
+            )
+          ) < 2
+        ) {
+          return(
+            data.frame(
+              Metabolite = metabolite,
+              Group = current_group,
+              Comparison = comparison_name,
+              N_Group = length(group1_values),
+              N_Other_Groups = length(group2_values),
+              Median_Group = median_group,
+              Median_Other_Groups = median_other_groups,
+              Median_Difference =
+                median_group -
+                median_other_groups,
+              Wilcoxon_W = NA_real_,
+              P_value = NA_real_,
+              stringsAsFactors = FALSE
+            )
+          )
+        }
+
+
+        test_result <- tryCatch(
+          stats::wilcox.test(
+            x = group1_values,
+            y = group2_values,
+            alternative = "two.sided",
+            paired = FALSE,
+            exact = FALSE
+          ),
+          error = function(e) {
+            NULL
+          }
+        )
+
+
+        if (is.null(test_result)) {
+          return(
+            data.frame(
+              Metabolite = metabolite,
+              Group = current_group,
+              Comparison = comparison_name,
+              N_Group = length(group1_values),
+              N_Other_Groups = length(group2_values),
+              Median_Group = median_group,
+              Median_Other_Groups = median_other_groups,
+              Median_Difference =
+                median_group -
+                median_other_groups,
+              Wilcoxon_W = NA_real_,
+              P_value = NA_real_,
+              stringsAsFactors = FALSE
+            )
+          )
+        }
+
+
+        data.frame(
+          Metabolite = metabolite,
+
+          Group = current_group,
+
+          Comparison = comparison_name,
+
+          N_Group =
+            length(group1_values),
+
+          N_Other_Groups =
+            length(group2_values),
+
+          Median_Group =
+            median_group,
+
+          Median_Other_Groups =
+            median_other_groups,
+
+          Median_Difference =
+            median_group -
+            median_other_groups,
+
+          Wilcoxon_W =
+            unname(
+              test_result$statistic
+            ),
+
+          P_value =
+            test_result$p.value,
+
+          stringsAsFactors = FALSE
+        )
+      }
+    )
+  }
+)
+
+
+# ============================================================
+# ============================================================
+
+if (
+  is.null(group_vs_rest_results) ||
+  nrow(group_vs_rest_results) == 0
+) {
+  stop(
+    "No group-versus-rest Wilcoxon results were generated."
+  )
+}
+
+
+cat(
+  "\nDimensions of the result table:\n"
+)
+
+print(
+  dim(group_vs_rest_results)
+)
+
+
+print(
+  head(
+    group_vs_rest_results
+  )
+)
+
+
+# ============================================================
+#
+# FDR is calculated across all metabolites separately
+# for each group-versus-rest comparison.
+# ============================================================
+
+group_vs_rest_results <-
+  group_vs_rest_results |>
+  dplyr::group_by(
+    Group
+  ) |>
+  dplyr::mutate(
+    FDR = stats::p.adjust(
+      P_value,
+      method = "fdr"
+    )
+  ) |>
+  dplyr::ungroup() |>
+  dplyr::arrange(
+    factor(
+      Group,
+      levels = available_groups
+    ),
+    FDR
+  )
+
+
+# ============================================================
+# ============================================================
+
+get_significance <- function(p) {
+
+  if (is.na(p)) {
+    return("")
+  }
+
+  if (p < 0.001) {
+    return("***")
+  }
+
+  if (p < 0.01) {
+    return("**")
+  }
+
+  if (p < 0.05) {
+    return("*")
+  }
+
+  return("")
+}
+
+
+group_vs_rest_results <-
+  group_vs_rest_results |>
+  dplyr::mutate(
+    Significance = vapply(
+      FDR,
+      get_significance,
+      character(1)
+    )
+  )
+
+
+# ============================================================
+# ============================================================
+
+significant_group_vs_rest_results <-
+  group_vs_rest_results |>
+  dplyr::filter(
+    !is.na(FDR),
+    FDR < 0.05
+  ) |>
+  dplyr::arrange(
+    FDR
+  )
+
+
+cat(
+  "\nNumber of significant metabolite-group associations:",
+  nrow(significant_group_vs_rest_results),
+  "\n"
+)
+
+
+number_unique_significant_metabolites <- length(
+  unique(
+    significant_group_vs_rest_results$Metabolite
+  )
+)
+
+
+cat(
+  "Number of unique significant metabolites:",
+  number_unique_significant_metabolites,
+  "\n\n"
+)
+
+
+# Count significant metabolites for each group
+significant_metabolites_per_group <-
+  significant_group_vs_rest_results |>
+  dplyr::count(
+    Group,
+    name = "Number_significant_metabolites"
+  )
+
+
+# Include groups with zero significant metabolites
+significant_metabolites_per_group <-
+  data.frame(
+    Group = available_groups,
+    stringsAsFactors = FALSE
+  ) |>
+  dplyr::left_join(
+    significant_metabolites_per_group,
+    by = "Group"
+  ) |>
+  dplyr::mutate(
+    Number_significant_metabolites =
+      tidyr::replace_na(
+        Number_significant_metabolites,
+        0L
+      )
+  )
+
+
+print(
+  significant_metabolites_per_group
+)
+
+
+# ============================================================
+# ============================================================
+
+all_results_file <- output_path(
+  "Metabolite_Group_vs_All_Other_Groups_Wilcoxon_Results.csv"
+)
+
+
+significant_results_file <- output_path(
+  "Significant_Metabolite_Group_vs_All_Other_Groups_Results.csv"
+)
+
+
+significant_counts_file <- output_path(
+  "Number_Significant_Metabolites_Per_Group_vs_Rest.csv"
+)
+
+
+utils::write.csv(
+  group_vs_rest_results,
+  file = all_results_file,
+  row.names = FALSE
+)
+
+
+utils::write.csv(
+  significant_group_vs_rest_results,
+  file = significant_results_file,
+  row.names = FALSE
+)
+
+
+utils::write.csv(
+  significant_metabolites_per_group,
+  file = significant_counts_file,
+  row.names = FALSE
+)
+
+
+# ============================================================
+#
+# the lowest minimum FDR so that a heatmap is still created.
+# ============================================================
+
+ranked_metabolites <-
+  group_vs_rest_results |>
+  dplyr::group_by(
+    Metabolite
+  ) |>
+  dplyr::summarise(
+    Minimum_FDR = if (
+      all(
+        is.na(FDR)
+      )
+    ) {
+      NA_real_
+    } else {
+      min(
+        FDR,
+        na.rm = TRUE
+      )
+    },
+    .groups = "drop"
+  ) |>
+  dplyr::filter(
+    !is.na(Minimum_FDR)
+  ) |>
+  dplyr::arrange(
+    Minimum_FDR
+  )
+
+
+significant_ranked_metabolites <-
+  ranked_metabolites |>
+  dplyr::filter(
+    Minimum_FDR < 0.05
+  )
+
+
+if (nrow(significant_ranked_metabolites) > 0) {
+
+  heatmap_metabolite_names <- utils::head(
+    significant_ranked_metabolites$Metabolite,
+    100
+  )
+
+  heatmap_title <-
+    "FDR-Significant Metabolites: Each Group Versus All Other Groups"
+
+} else {
+
+  heatmap_metabolite_names <- utils::head(
+    ranked_metabolites$Metabolite,
+    50
+  )
+
+  heatmap_title <-
+    "Top Metabolites by FDR: Each Group Versus All Other Groups"
+
+  message(
+    paste(
+      "No metabolites passed FDR < 0.05.",
+      "The heatmap will display the 50 metabolites",
+      "with the lowest minimum FDR."
+    )
+  )
+}
+
+
+cat(
+  "\nNumber of metabolites displayed in the heatmap:",
+  length(heatmap_metabolite_names),
+  "\n"
+)
+
+
+# ============================================================
+# ============================================================
+
+if (length(heatmap_metabolite_names) == 0) {
+  stop(
+    "No metabolites were available for the heatmap."
+  )
+}
+
+
+# Median-difference matrix
+median_difference_data <-
+  group_vs_rest_results |>
+  dplyr::filter(
+    Metabolite %in%
+      heatmap_metabolite_names
+  ) |>
+  dplyr::select(
+    Metabolite,
+    Group,
+    Median_Difference
+  ) |>
+  tidyr::pivot_wider(
+    names_from = Group,
+    values_from = Median_Difference
+  )
+
+
+median_difference_matrix <- as.data.frame(
+  median_difference_data
+)
+
+
+rownames(median_difference_matrix) <-
+  median_difference_matrix$Metabolite
+
+
+median_difference_matrix$Metabolite <- NULL
+
+
+median_difference_matrix <- as.matrix(
+  median_difference_matrix
+)
+
+
+# Order rows by minimum FDR
+desired_row_order <- heatmap_metabolite_names[
+  heatmap_metabolite_names %in%
+    rownames(median_difference_matrix)
+]
+
+
+median_difference_matrix <-
+  median_difference_matrix[
+    desired_row_order,
+    available_groups,
+    drop = FALSE
+  ]
+
+
+# Significance-star matrix
+significance_data <-
+  group_vs_rest_results |>
+  dplyr::filter(
+    Metabolite %in%
+      heatmap_metabolite_names
+  ) |>
+  dplyr::select(
+    Metabolite,
+    Group,
+    Significance
+  ) |>
+  tidyr::pivot_wider(
+    names_from = Group,
+    values_from = Significance,
+    values_fill = ""
+  )
+
+
+significance_matrix <- as.data.frame(
+  significance_data
+)
+
+
+rownames(significance_matrix) <-
+  significance_matrix$Metabolite
+
+
+significance_matrix$Metabolite <- NULL
+
+
+significance_matrix <- as.matrix(
+  significance_matrix
+)
+
+
+# Match the row and column order
+significance_matrix <-
+  significance_matrix[
+    rownames(median_difference_matrix),
+    colnames(median_difference_matrix),
+    drop = FALSE
+  ]
+
+
+# ============================================================
+# ============================================================
+
+maximum_absolute_difference <- suppressWarnings(
+  max(
+    abs(median_difference_matrix),
+    na.rm = TRUE
+  )
+)
+
+
+if (
+  !is.finite(maximum_absolute_difference) ||
+  maximum_absolute_difference == 0
+) {
+  maximum_absolute_difference <- 1
+}
+
+
+my_palette <- grDevices::colorRampPalette(
+  c(
+    "blue",
+    "white",
+    "red"
+  )
+)(50)
+
+
+heatmap_breaks <- seq(
+  -maximum_absolute_difference,
+  maximum_absolute_difference,
+  length.out = 51
+)
+
+
+# ============================================================
+# ============================================================
+
+graphics.off()
+
+
+heatmap_height <- min(
+  max(
+    8,
+    nrow(median_difference_matrix) * 0.15
+  ),
+  30
+)
+
+
+heatmap_file <- output_path(
+  "Heatmap_Metabolite_Group_vs_All_Other_Groups.pdf"
+)
+
+
+grDevices::pdf(
+  file = heatmap_file,
+  width = 12,
+  height = heatmap_height,
+  onefile = FALSE
+)
+
+
+pheatmap::pheatmap(
+  mat = median_difference_matrix,
+
+  cluster_rows =
+    nrow(median_difference_matrix) > 1 &&
+    !anyNA(median_difference_matrix),
+
+  cluster_cols = FALSE,
+
+  # Keep actual median differences
+  scale = "none",
+
+  show_rownames = TRUE,
+  show_colnames = TRUE,
+
+  # Stars are based on FDR
+  display_numbers =
+    significance_matrix,
+
+  number_color = "black",
+
+  color = my_palette,
+
+  breaks = heatmap_breaks,
+
+  angle_col = "0",
+
+  fontsize_row = 6,
+  fontsize_col = 10,
+
+  border_color = NA,
+
+  na_col = "grey90",
+
+  main = heatmap_title
+)
+
+
+grDevices::dev.off()
+
+
+# ============================================================
+# ============================================================
+
+cat(
+  "\nAll results were saved in:\n",
+  normalizePath(
+    output_dir,
+    winslash = "/",
+    mustWork = FALSE
+  ),
+  "\n\n"
+)
+
+
+cat(
+  "Group sizes:\n",
+  group_sizes_file,
+  "\n\n"
+)
+
+
+cat(
+  "Selected metabolite variables:\n",
+  selected_metabolites_file,
+  "\n\n"
+)
+
+
+cat(
+  "Complete Wilcoxon results:\n",
+  all_results_file,
+  "\n\n"
+)
+
+
+cat(
+  "Significant Wilcoxon results:\n",
+  significant_results_file,
+  "\n\n"
+)
+
+
+cat(
+  "Significant metabolite counts:\n",
+  significant_counts_file,
+  "\n\n"
+)
+
+
+cat(
+  "Heatmap:\n",
+  heatmap_file,
+  "\n\n"
+)
+
+
+print(
+  list.files(
+    output_dir,
+    pattern = paste0(
+      run_timestamp,
+      "\\.(csv|pdf)$"
+    ),
+    full.names = TRUE
+  )
+)
+
+
+# ============================================================
+# ============================================================
+
+if (
+  interactive() &&
+  .Platform$OS.type == "windows"
+) {
+
+  shell.exec(
+    normalizePath(
+      output_dir,
+      winslash = "\\",
+      mustWork = TRUE
+    )
+  )
+
+  if (file.exists(heatmap_file)) {
+
+    shell.exec(
+      normalizePath(
+        heatmap_file,
+        winslash = "\\",
+        mustWork = TRUE
+      )
+    )
+  }
+}
+```
+

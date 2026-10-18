@@ -1,0 +1,1058 @@
+---
+title: "Merge MetS Extreme-Search Archetypes into Whole-Population Dataset"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Overview
+
+This script merges the MetS extreme-search archetype results
+(`Merged.Metabolomics.Data.soft.MetS`, private cohort) into the whole-population
+dataset (`Merged.Metabolomics.Data.soft`, private cohort), creating a new grouping
+variable:
+
+- **0 = Healthy** — not part of the MetS extreme-search subset
+- **1 = Mixed etiology** — in the MetS subset, but no archetype weight exceeds the threshold
+- **2 = Extreme** — in the MetS subset, with max archetype weight above the threshold
+
+The whole population's own `Archetypes 1-4` columns (a separate 4-archetype
+decomposition) are **ignored** for this classification — they are left in
+the data untouched but not used to derive the new group variable.
+
+```{r parameters}
+# ---- Edit these paths / threshold as needed ----
+path_whole_population <- "Merged.Metabolomics.Data.soft.RData"
+path_mets             <- "Merged.Metabolomics.Data.soft.MetS.RData"
+
+id_col     <- "u3n_metabBiocrP500_ff4"          # unique subject ID column
+arch_cols  <- c("Archetypes 1", "Archetypes 2", "Archetypes 3")  # MetS archetypes
+threshold  <- 0.6                                # extreme vs. mixed cutoff
+
+# All results/plots from this script are written here, in a folder specific
+# to this RMD, so outputs from different analyses never collide.
+output_dir <- "merge_MetS_groups_vf_results"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+```
+
+## Load the two datasets
+
+```{r load-data}
+load(path_whole_population)   # loads object: Merged.Metabolomics.Data.soft
+load(path_mets)                # loads object: Merged.Metabolomics.Data.soft.MetS
+
+wp <- Merged.Metabolomics.Data.soft
+ms <- Merged.Metabolomics.Data.soft.MetS
+
+stopifnot(id_col %in% colnames(wp))
+stopifnot(id_col %in% colnames(ms))
+stopifnot(all(arch_cols %in% colnames(ms)))
+
+dim(wp)
+dim(ms)
+```
+
+```{r compute-groups}
+ms_arch <- ms[, c(id_col, arch_cols)]
+
+# Max archetype weight per subject, and which archetype it belongs to
+ms_arch$max_weight         <- apply(ms_arch[, arch_cols], 1, max)
+ms_arch$dominant_archetype <- arch_cols[apply(ms_arch[, arch_cols], 1, which.max)]
+ms_arch$MetS_Group <- ifelse(ms_arch$max_weight > threshold, 2L, 1L)
+
+table(ms_arch$MetS_Group)
+summary(ms_arch$max_weight)
+```
+
+## Merge into the whole-population dataset
+
+```{r merge}
+merged <- wp
+merged$MetS_Group <- 0L
+merged$MetS_DominantArchetype <- NA_character_
+merged$MetS_MaxArchetypeWeight <- NA_real_
+
+match_idx <- match(merged[[id_col]], ms_arch[[id_col]])
+in_mets   <- !is.na(match_idx)
+
+merged$MetS_Group[in_mets]              <- ms_arch$MetS_Group[match_idx[in_mets]]
+merged$MetS_DominantArchetype[in_mets]  <- ms_arch$dominant_archetype[match_idx[in_mets]]
+merged$MetS_MaxArchetypeWeight[in_mets] <- ms_arch$max_weight[match_idx[in_mets]]
+
+# Make it a labeled factor for convenience
+merged$MetS_Group <- factor(
+  merged$MetS_Group,
+  levels = c(0, 1, 2),
+  labels = c("Healthy", "Mixed", "Extreme")
+)
+
+table(merged$MetS_Group)
+```
+
+## Sanity checks
+
+```{r checks}
+# Every MetS-subset subject should be accounted for, and no extras introduced
+stopifnot(sum(merged$MetS_Group != "Healthy") == nrow(ms))
+stopifnot(all(merged[[id_col]][merged$MetS_Group != "Healthy"] %in% ms[[id_col]]))
+
+dim(merged)
+str(merged[, c(id_col, "MetS_Group", "MetS_DominantArchetype", "MetS_MaxArchetypeWeight")])
+```
+
+## Save outputs
+
+```{r save}
+Merged.Metabolomics.Data.soft.WholePopulation <- merged
+save(
+  Merged.Metabolomics.Data.soft.WholePopulation,
+  file = file.path(output_dir, "Merged_Metabolomics_Data_soft_WholePopulation_with_MetSGroup.RData")
+)
+
+write.csv(
+  merged,
+  file = file.path(output_dir, "Merged_Metabolomics_Data_soft_WholePopulation_with_MetSGroup.csv"),
+  row.names = FALSE
+)
+```
+
+
+### PCA
+```{r PCA}
+## =============================================================================
+## Three-way PCA on clinical traits, using the `merged` data.frame you just
+## =============================================================================
+
+## ```{r define-clinical-traits-merged}
+clinical_cols <- c(
+  "u3lk_trin", "u3lk_krean", "u3lk_choln", "u3tglukfastn", "u3lk_ldln",
+  "u3lk_hdln", "u3tquickin", "u3thoma2_ir", "u3thoma2_s",
+  "u3tinsfastn", "u3h_crp", "u3tbmi", "u3tins2n", "u3twhrat", "u3tgewi",
+  "u3l_hbavn", "u3tgluk2n", "u3thoma2_b", "u3tsysmm", "u3tdiamm", "u3tgroe"
+)  # MetS_case dropped -- not present / would be redundant with MetS_Group
+
+missing_clin <- setdiff(clinical_cols, names(merged))
+if (length(missing_clin) > 0) {
+  warning("These clinical columns are missing from `merged` and will be skipped: ",
+          paste(missing_clin, collapse = ", "))
+  clinical_cols <- setdiff(clinical_cols, missing_clin)
+}
+## ```
+
+## ```{r pca-on-clinical-merged}
+clinical_input <- merged[, clinical_cols, drop = FALSE]
+clinical_input <- clinical_input[, sapply(clinical_input, function(x) is.numeric(x) && sd(x, na.rm = TRUE) > 0), drop = FALSE]
+clinical_input <- as.data.frame(lapply(clinical_input, function(x) {
+  x[is.na(x)] <- median(x, na.rm = TRUE)   # simple median impute; swap for your preferred method
+  x
+}))
+
+pca_res_clin <- prcomp(clinical_input, center = TRUE)
+var_explained_clin <- round(100 * pca_res_clin$sdev^2 / sum(pca_res_clin$sdev^2), 1)
+
+pca_scores_clin <- as.data.frame(pca_res_clin$x[, 1:2])
+pca_scores_clin[[id_col]] <- merged[[id_col]]
+pca_scores_clin$MetS_Group             <- merged$MetS_Group
+pca_scores_clin$MetS_DominantArchetype <- merged$MetS_DominantArchetype
+
+# Build the plotting group: Healthy / Mixed / Extreme-<archetype>
+pca_scores_clin$PlotGroup <- as.character(pca_scores_clin$MetS_Group)
+extreme_idx <- pca_scores_clin$MetS_Group == "Extreme"
+pca_scores_clin$PlotGroup[extreme_idx] <- pca_scores_clin$MetS_DominantArchetype[extreme_idx]
+table(pca_scores_clin$PlotGroup)
+## ```
+
+## ```{r pca-plot-three-tier}
+library(ggplot2)
+
+group_colors <- c(
+  "Healthy"       = "grey70",
+  "Mixed"         = "#FF7F0E",   # orange
+  "Archetypes 1"  = "#E64B35",   # red
+  "Archetypes 2"  = "#4DBBD5",   # teal
+  "Archetypes 3"  = "#00A087"    # green
+)
+
+# Draw order: Healthy first (background), then Mixed, then Extreme on top
+plot_order <- c("Healthy", "Mixed", "Archetypes 1", "Archetypes 2", "Archetypes 3")
+pca_scores_clin$PlotGroup <- factor(pca_scores_clin$PlotGroup, levels = plot_order)
+pca_scores_clin <- pca_scores_clin[order(pca_scores_clin$PlotGroup), ]
+
+p_pca_three_tier <- ggplot(pca_scores_clin, aes(x = PC1, y = PC2, color = PlotGroup)) +
+  geom_point(alpha = 0.75, size = 2) +
+  scale_color_manual(values = group_colors, name = "Group", drop = FALSE) +
+  labs(
+    title    = "PCA of Clinical Traits: Healthy, Mixed, and Extreme MetS Subjects",
+    subtitle = "Healthy (grey), Mixed etiology (orange), Extreme archetypes (colored)",
+    x = paste0("PC1 (", var_explained_clin[1], "% variance)"),
+    y = paste0("PC2 (", var_explained_clin[2], "% variance)")
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title      = element_text(face = "bold"),
+    legend.position = "right"
+  )
+
+print(p_pca_three_tier)
+
+ggsave(
+  filename = file.path(output_dir, "PCA_clinical_Healthy_Mixed_Extreme.pdf"),
+  plot = p_pca_three_tier, width = 7.5, height = 5.5
+)
+## ```
+
+``` 
+```{r pca-plot-three-tier-v2}
+library(ggplot2)
+ 
+group_colors <- c(
+  "Healthy"       = "grey80",
+  "Mixed"         = "#FF7F0E",   # orange
+  "Archetypes 1"  = "#E64B35",   # red
+  "Archetypes 2"  = "#3C8DBC",   # blue (swapped from light blue -- more contrast against grey/orange)
+  "Archetypes 3"  = "#00A087"    # green
+)
+ 
+plot_order <- c("Healthy", "Mixed", "Archetypes 1", "Archetypes 2", "Archetypes 3")
+pca_scores_clin$PlotGroup <- factor(pca_scores_clin$PlotGroup, levels = plot_order)
+pca_scores_clin <- pca_scores_clin[order(pca_scores_clin$PlotGroup), ]
+ 
+p_pca_v2 <- ggplot() +
+  # Healthy: small, very transparent, no outline -- recedes as background
+  geom_point(
+    data = subset(pca_scores_clin, PlotGroup == "Healthy"),
+    aes(x = PC1, y = PC2),
+    color = "grey85", alpha = 0.35, size = 1.4
+  ) +
+  # Mixed: medium, moderate transparency
+  geom_point(
+    data = subset(pca_scores_clin, PlotGroup == "Mixed"),
+    aes(x = PC1, y = PC2),
+    color = group_colors["Mixed"], alpha = 0.65, size = 2
+  ) +
+  # Extreme archetypes: larger, opaque, black outline for contrast
+  geom_point(
+    data = subset(pca_scores_clin, PlotGroup %in% c("Archetypes 1", "Archetypes 2", "Archetypes 3")),
+    aes(x = PC1, y = PC2, fill = PlotGroup),
+    shape = 21, color = "black", stroke = 0.3, size = 3, alpha = 0.9
+  ) +
+  stat_ellipse(
+    data = subset(pca_scores_clin, PlotGroup %in% c("Archetypes 1", "Archetypes 2", "Archetypes 3")),
+    aes(x = PC1, y = PC2, color = PlotGroup),
+    type = "norm", level = 0.68, linewidth = 0.9, linetype = "dashed", show.legend = FALSE
+  ) +
+  scale_fill_manual(values = group_colors, name = "Extreme archetype",
+                     breaks = c("Archetypes 1", "Archetypes 2", "Archetypes 3")) +
+  scale_color_manual(values = group_colors, guide = "none") +
+  labs(
+    title    = "PCA of Clinical Traits: Healthy, Mixed, and Extreme MetS Subjects",
+    subtitle = "Healthy (faint grey background), Mixed (orange), Extreme archetypes (outlined, with 68% ellipse)",
+    x = paste0("PC1 (", var_explained_clin[1], "% variance)"),
+    y = paste0("PC2 (", var_explained_clin[2], "% variance)")
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    plot.title      = element_text(face = "bold"),
+    legend.position = "right"
+  )
+ 
+print(p_pca_v2)
+ 
+ggsave(
+  filename = file.path(output_dir, "PCA_clinical_Healthy_Mixed_Extreme_v2.pdf"),
+  plot = p_pca_v2, width = 8, height = 5.5
+)
+
+ggsave(
+  filename = file.path(output_dir, "PCA_clinical_Healthy_Mixed_Extreme_v2.png"),
+  plot = p_pca_v2, width = 8, height = 5.5, dpi = 600
+)
+
+## ```
+ 
+## ---- OPTIONAL: small-multiples version (often the clearest for overlap) ----
+## ```{r pca-plot-facet-by-archetype}
+# One panel per archetype: Healthy+Mixed always grey, only that archetype colored.
+facet_data <- pca_scores_clin
+facet_data$Highlight <- as.character(facet_data$PlotGroup)
+ 
+make_facet_layer <- function(target_archetype) {
+  d <- facet_data
+  d$Panel <- target_archetype
+  d$Highlight <- ifelse(d$PlotGroup == target_archetype, target_archetype, "Other")
+  d
+}
+ 
+facet_all <- do.call(rbind, lapply(
+  c("Archetypes 1", "Archetypes 2", "Archetypes 3"), make_facet_layer
+))
+facet_all$Panel <- factor(facet_all$Panel, levels = c("Archetypes 1", "Archetypes 2", "Archetypes 3"))
+ 
+p_pca_facet <- ggplot(facet_all, aes(x = PC1, y = PC2)) +
+  geom_point(
+    data = subset(facet_all, Highlight == "Other"),
+    color = "grey80", alpha = 0.4, size = 1.3
+  ) +
+  geom_point(
+    data = subset(facet_all, Highlight != "Other"),
+    aes(color = Highlight), size = 2.5, alpha = 0.9
+  ) +
+  scale_color_manual(values = group_colors, guide = "none") +
+  facet_wrap(~ Panel, ncol = 3) +
+  labs(
+    title = "PCA of Clinical Traits, Highlighted by Archetype",
+    x = paste0("PC1 (", var_explained_clin[1], "% variance)"),
+    y = paste0("PC2 (", var_explained_clin[2], "% variance)")
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(plot.title = element_text(face = "bold"), strip.text = element_text(face = "bold"))
+ 
+print(p_pca_facet)
+ggsave(
+  filename = file.path(output_dir, "PCA_clinical_facet_by_archetype.pdf"),
+  plot = p_pca_facet, width = 11, height = 4.5
+)
+``` 
+
+
+## Regression analysis setup
+
+Everything below uses **base R only** — no extra packages need to be
+installed. All clinical traits and metabolites in this dataset are already
+standardized (z-scored), so the regression coefficients below are
+standardized betas (comparable in magnitude across metabolites/traits).
+
+```{r reg-setup}
+cols <- colnames(merged)
+metabolite_cols <- cols[which(cols == "C0"):which(cols == "Choline")]
+# (positive beta = higher in MetS cases).
+stopifnot(all(merged$u3tmsidfup %in% c(1, 2)))
+merged$MetS_case <- as.integer(merged$u3tmsidfup == 1)
+table(merged$MetS_case, merged$u3tmsidfup)
+
+# Continuous MetS-relevant clinical traits, plus the binary MetS case-status.
+#  need a different model; recode/relevel them yourself if you want them in.)
+mets_traits <- c("u3tgewi","u3tgroe","u3tbmi","u3twhrat","u3tsysmm","u3tdiamm",
+                 "u3tglukfastn","u3tgluk2n","u3tinsfastn","u3tins2n",
+                 "u3thoma2_b","u3thoma2_s","u3thoma2_ir","u3tquickin",
+                 "u3lk_choln","u3lk_hdln","u3lk_ldln","u3lk_trin","u3lk_krean",
+                 "u3l_hbavn","u3h_crp","MetS_case")
+stopifnot(all(mets_traits %in% colnames(merged)))
+
+# Full set of clinical traits used to define the MetS extreme-search
+# subclustering (archetype decomposition), kept here as a code -> readable
+# label dictionary. mets_traits above still drives the models actually
+# fitted below; this is used purely to relabel plots/tables with
+# human-readable trait names instead of raw variable codes.
+traits = c(
+    Age = "u3talteru",
+    Gender = "u3csex",
+    Weight = "u3tgewi",
+    Height = "u3tgroe",
+    BMI = "u3tbmi",
+    WHO_BMI_Category = "u3tbmiwho",
+    WHR = "u3twhrat",
+    WHR_Category = "u3twhratc",
+    SBP = "u3tsysmm",
+    DBP = "u3tdiamm",
+    Hypertension = "u3twhoish",
+    Fasting_glucose = "u3tglukfastn",
+    Glucose_2h = "u3tgluk2n",
+    Diabetes_WHO = "u3tdm110y15",
+    Fasting_serum_insulin = "u3tinsfastn",
+    Insulin_2h = "u3tins2n",
+    Metabolic_Syndrome_IDF = "u3tmsidfup",
+    HOMA_Beta = "u3thoma2_b",
+    HOMA_Sensitivity = "u3thoma2_s",
+    HOMA_IR = "u3thoma2_ir",
+    Insulin_Sensitivity_Quicki = "u3tquickin",
+    Cholesterol = "u3lk_choln",
+    HDL = "u3lk_hdln",
+    LDL = "u3lk_ldln",
+    TG = "u3lk_trin",
+    Creatinine = "u3lk_krean",
+    HbA1c = "u3l_hbavn",
+    hsCRP = "u3h_crp"
+  )
+trait_label_lookup <- setNames(names(traits), traits)
+trait_label_lookup["MetS_case"] <- "MetS_case"  # derived variable, not in `traits`
+
+trait_label <- function(code) {
+  lbl <- trait_label_lookup[code]
+  ifelse(is.na(lbl), code, lbl)
+}
+
+age_col <- "u3talteru"
+sex_col <- "u3csex"
+
+length(metabolite_cols)  # number of metabolites
+length(mets_traits)      # number of clinical traits (now includes MetS_case)
+
+# small helper to pull a single term's beta/se/p out of a fitted lm
+get_term_stats <- function(fit, term) {
+  s <- summary(fit)$coefficients
+  if (!term %in% rownames(s)) return(c(beta = NA, se = NA, p = NA))
+  c(beta = s[term, 1], se = s[term, 2], p = s[term, 4])
+}
+```
+
+For every metabolite x clinical trait pair, fit:
+
+`metabolite ~ trait + age + sex`
+
+and pull out the trait's beta/SE/p-value. P-values are FDR (Benjamini-Hochberg)
+corrected **within each trait** (i.e. across the the metabolites tested for
+that trait).
+
+```{r step1-mwas}
+run_mwas_continuous <- function(data, metabolites, trait, age_col, sex_col, extra_covars = NULL) {
+  covars <- c(trait, age_col, sex_col, extra_covars)
+  out <- vector("list", length(metabolites))
+  for (i in seq_along(metabolites)) {
+    mb <- metabolites[i]
+    form <- as.formula(paste0("`", mb, "` ~ ", paste(covars, collapse = " + ")))
+    fit <- lm(form, data = data)
+    st <- get_term_stats(fit, trait)
+    out[[i]] <- data.frame(metabolite = mb, trait = trait,
+                            beta = st["beta"], se = st["se"], p = st["p"],
+                            n = nobs(fit))
+  }
+  do.call(rbind, out)
+}
+
+mwas_list    <- lapply(mets_traits, function(tr)
+                  run_mwas_continuous(merged, metabolite_cols, tr, age_col, sex_col))
+mwas_results <- do.call(rbind, mwas_list)
+rownames(mwas_results) <- NULL
+
+mwas_results$q <- NA_real_
+for (tr in mets_traits) {
+  idx <- mwas_results$trait == tr
+  mwas_results$q[idx] <- p.adjust(mwas_results$p[idx], method = "BH")
+}
+
+cat("Total metabolite-trait tests:", nrow(mwas_results), "\n")
+cat("Significant at FDR q < 0.05:", sum(mwas_results$q < 0.05),
+    sprintf("(%.1f%%)\n", 100 * mean(mwas_results$q < 0.05)))
+for (tr in c("u3lk_trin", "u3lk_hdln", "u3tbmi", "u3tglukfastn", "u3h_crp", "MetS_case")) {
+  cat("\nTop hits for", trait_label(tr), "(", tr, "):\n")
+  sub <- mwas_results[mwas_results$trait == tr, ]
+  print(head(sub[order(sub$p), c("metabolite","beta","p","q")], 5), row.names = FALSE)
+}
+
+write.csv(mwas_results, file.path(output_dir, "step1_metabolite_trait_associations.csv"), row.names = FALSE)
+```
+```{r step1b-plot associations}
+library(ggplot2)
+sub <- mwas_results[mwas_results$trait %in% c("u3lk_trin","u3lk_hdln","u3tbmi","u3tglukfastn","u3h_crp","MetS_case"), ]
+
+sub$direction <- with(sub, ifelse(q >= 0.05, "Not significant",
+                            ifelse(beta > 0, "Positive (q < 0.05)", "Negative (q < 0.05)")))
+sub$direction <- factor(sub$direction,
+                         levels = c("Negative (q < 0.05)", "Not significant", "Positive (q < 0.05)"))
+
+vpall= ggplot(sub, aes(x = beta, y = -log10(p), color = direction)) +
+  geom_point(alpha = 0.7) +
+  facet_wrap(~trait, scales = "free", labeller = as_labeller(trait_label_lookup)) +
+  scale_color_manual(values = c("Negative (q < 0.05)" = "firebrick",
+                                 "Not significant"      = "grey70",
+                                 "Positive (q < 0.05)"  = "steelblue")) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey40") +
+  labs(color = NULL, x = "Beta", y = expression(-log[10](p))) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.title = element_text(size = 16),
+    axis.text  = element_text(size = 12),
+    strip.text = element_text(size = 14, face = "bold"),
+    legend.text = element_text(size = 13)
+  )
+
+ggsave(file.path(output_dir, "volcano_plots.pdf"), plot = vpall, width = 15, height = 7)
+
+``` 
+
+For every metabolite, fit `metabolite ~ MetS_Group + age + sex` and extract
+each group's contrast vs. Healthy (Mixed vs Healthy, Extreme vs Healthy).
+FDR correction is applied across the the metabolites, separately for each
+contrast.
+
+```{r step2-group}
+run_group_contrast <- function(data, metabolites, ref_level, age_col, sex_col) {
+  d <- data
+  d$MetS_Group <- relevel(d$MetS_Group, ref = ref_level)
+  out <- vector("list", length(metabolites))
+  for (i in seq_along(metabolites)) {
+    mb <- metabolites[i]
+    form <- as.formula(paste0("`", mb, "` ~ MetS_Group + ", age_col, " + ", sex_col))
+    fit <- lm(form, data = d)
+    row <- data.frame(metabolite = mb)
+    for (lvl in setdiff(levels(d$MetS_Group), ref_level)) {
+      term <- paste0("MetS_Group", lvl)
+      st <- get_term_stats(fit, term)
+      row[[paste0("beta_", lvl, "_vs_", ref_level)]] <- st["beta"]
+      row[[paste0("se_",   lvl, "_vs_", ref_level)]] <- st["se"]
+      row[[paste0("p_",    lvl, "_vs_", ref_level)]] <- st["p"]
+    }
+    out[[i]] <- row
+  }
+  do.call(rbind, out)
+}
+
+group_results <- run_group_contrast(merged, metabolite_cols, "Healthy", age_col, sex_col)
+
+group_results$q_Mixed_vs_Healthy   <- p.adjust(group_results$p_Mixed_vs_Healthy,   method = "BH")
+group_results$q_Extreme_vs_Healthy <- p.adjust(group_results$p_Extreme_vs_Healthy, method = "BH")
+
+cat("Significant (q<0.05) Mixed vs Healthy:",   sum(group_results$q_Mixed_vs_Healthy   < 0.05), "\n")
+cat("Significant (q<0.05) Extreme vs Healthy:", sum(group_results$q_Extreme_vs_Healthy < 0.05), "\n")
+
+cat("\nTop hits, Mixed vs Healthy:\n")
+print(head(group_results[order(group_results$p_Mixed_vs_Healthy),
+      c("metabolite","beta_Mixed_vs_Healthy","q_Mixed_vs_Healthy")], 8), row.names = FALSE)
+
+cat("\nTop hits, Extreme vs Healthy:\n")
+print(head(group_results[order(group_results$p_Extreme_vs_Healthy),
+      c("metabolite","beta_Extreme_vs_Healthy","q_Extreme_vs_Healthy")], 8), row.names = FALSE)
+
+write.csv(group_results, file.path(output_dir, "step2_metabolite_group_associations.csv"), row.names = FALSE)
+```
+
+Using the two contrasts from Step 2 (each thresholded at FDR q < 0.05), this
+shows how much the "Mixed-vs-Healthy" and "Extreme-vs-Healthy" metabolite
+signatures overlap with each other.
+
+```{r step3-overlap}
+set_MH <- group_results$metabolite[group_results$q_Mixed_vs_Healthy   < 0.05]
+set_EH <- group_results$metabolite[group_results$q_Extreme_vs_Healthy < 0.05]
+
+cat("Set sizes -> Mixed vs Healthy:", length(set_MH),
+    " | Extreme vs Healthy:", length(set_EH), "\n")
+
+n_MH_only <- length(setdiff(set_MH, set_EH))
+n_EH_only <- length(setdiff(set_EH, set_MH))
+n_both    <- length(intersect(set_MH, set_EH))
+
+cat("Exclusive to Mixed-vs-Healthy:", n_MH_only, "\n")
+cat("Exclusive to Extreme-vs-Healthy:", n_EH_only, "\n")
+cat("Shared by both:", n_both, "\n")
+draw_venn2 <- function(n1, n2, n12, labels = c("A", "B")) {
+  plot(0, 0, type = "n", xlim = c(-1.8, 3.0), ylim = c(-2.1, 1.3),
+       axes = FALSE, xlab = "", ylab = "", asp = 1)
+  symbols(x = c(0, 1.1), y = c(0, 0), circles = c(1, 1),
+          inches = FALSE, add = TRUE,
+          fg = c("steelblue", "firebrick"), lwd = 2.5)
+  text(-0.35, 0, n1, cex = 1.4)
+  text(1.45, 0, n2, cex = 1.4)
+  text(0.55, 0, n12, cex = 1.4, font = 2)
+  legend(x = 0.55, y = -1.3, legend = labels, col = c("steelblue", "firebrick"),
+         lwd = 2.5, bty = "n", cex = 0.95, xjust = 0.5, yjust = 1)
+}
+
+pdf(file.path(output_dir, "venn_diagram.pdf"), width = 6, height = 5)
+draw_venn2(n_MH_only, n_EH_only, n_both,
+           labels = c("Mixed vs Healthy", "Extreme vs Healthy"))
+dev.off()
+```
+
+This repeats the Step 1 metabolite-trait regressions, but adds an `Extreme`
+indicator (Extreme vs everyone else) as an additional covariate:
+
+`metabolite ~ trait + age + sex + Extreme`
+
+Comparing the trait beta before vs. after shows how much of each
+metabolite-trait association is confounded by / shared with extreme MetS
+status.
+
+```{r step4-adjust-extreme}
+merged$Extreme <- as.integer(merged$MetS_Group == "Extreme")
+
+mwas_list_adj <- lapply(mets_traits, function(tr)
+                   run_mwas_continuous(merged, metabolite_cols, tr, age_col, sex_col,
+                                       extra_covars = "Extreme"))
+mwas_results_adj <- do.call(rbind, mwas_list_adj)
+rownames(mwas_results_adj) <- NULL
+
+mwas_results_adj$q <- NA_real_
+for (tr in mets_traits) {
+  idx <- mwas_results_adj$trait == tr
+  mwas_results_adj$q[idx] <- p.adjust(mwas_results_adj$p[idx], method = "BH")
+}
+
+compare <- merge(
+  mwas_results[,     c("metabolite","trait","beta","p","q")],
+  mwas_results_adj[, c("metabolite","trait","beta","p","q")],
+  by = c("metabolite","trait"), suffixes = c("_unadj","_adj")
+)
+compare$beta_change     <- compare$beta_adj - compare$beta_unadj
+compare$pct_beta_change <- 100 * (compare$beta_adj - compare$beta_unadj) / abs(compare$beta_unadj)
+compare$sig_unadj <- compare$q_unadj < 0.05
+compare$sig_adj   <- compare$q_adj   < 0.05
+compare$status <- ifelse(compare$sig_unadj & compare$sig_adj,  "Stays significant",
+                   ifelse(compare$sig_unadj & !compare$sig_adj, "Loses significance",
+                   ifelse(!compare$sig_unadj & compare$sig_adj, "Gains significance",
+                                                                  "Stays non-sig")))
+
+cat("How associations change once Extreme status is adjusted for:\n")
+print(table(compare$status))
+
+cat("\nMedian |beta change| (all pairs):", round(median(abs(compare$beta_change)), 4), "\n")
+cat("Median |% beta change| (pairs significant before adjustment):",
+    round(median(abs(compare$pct_beta_change[compare$sig_unadj])), 1), "%\n")
+
+cat("\nWhich traits lose the most associations once Extreme is adjusted for:\n")
+print(sort(table(compare$trait[compare$status == "Loses significance"]), decreasing = TRUE))
+
+cat("\nLargest attenuations among pairs that lose significance:\n")
+lost <- compare[compare$status == "Loses significance", ]
+lost <- lost[order(-abs(lost$pct_beta_change)), ]
+print(head(lost[, c("metabolite","trait","beta_unadj","beta_adj","pct_beta_change")], 10),
+      row.names = FALSE)
+
+write.csv(compare, file.path(output_dir, "step4_extreme_adjusted_comparison.csv"), row.names = FALSE)
+```
+
+This plots every metabolite-trait beta from Step 1 (x-axis, unadjusted)
+against the same pair's beta from Step 4 (y-axis, adjusted for Extreme).
+Points on the dashed diagonal are unaffected by the adjustment; points that
+pull away from the diagonal — especially those that cross from significant
+(blue) to non-significant (red) — are associations that were partly
+confounded with extreme MetS status.
+
+```{r step5-compare-plot}
+pdf(file.path(output_dir, "beta_adjustment_comparison.pdf"), width = 10, height = 7)
+
+# Combine significance status with direction (sign of adjusted beta)
+compare$status_dir <- with(compare, ifelse(
+  status == "Stays significant" & beta_adj > 0, "Stays significant (positive)",
+  ifelse(status == "Stays significant" & beta_adj < 0, "Stays significant (negative)",
+         status)
+))
+
+status_colors <- c(
+  "Stays significant (positive)" = "steelblue",
+  "Stays significant (negative)" = "firebrick",
+  "Gains significance"           = "darkgreen",
+  "Loses significance"           = "darkorange",
+  "Stays non-sig"                = "grey80"
+)
+
+plot(compare$beta_unadj, compare$beta_adj,
+     col = status_colors[compare$status_dir], pch = 16, cex = 0.6,
+     xlab = "Beta (unadjusted: trait + age + sex)",
+     ylab = "Beta (adjusted: trait + age + sex + Extreme)",
+     main = "Metabolite-trait associations:\nwith vs without adjustment for Extreme status",
+     cex.lab = 1.4, cex.axis = 1.2, cex.main = 1.3)
+abline(0, 1, lty = 2, col = "black")
+abline(h = 0, v = 0, col = "grey90")
+legend("topleft", legend = names(status_colors), col = status_colors, pch = 16,
+       bty = "n", cex = 1.0)
+
+dev.off()
+```
+
+A per-trait summary of how many associations are lost/gained/retained, and
+the overall correlation between adjusted and unadjusted betas (a value
+noticeably below 1 flags traits whose metabolite signature is more strongly
+entangled with Extreme status):
+
+```{r step5-summary-table}
+summary_by_trait <- do.call(rbind, lapply(mets_traits, function(tr) {
+  sub <- compare[compare$trait == tr, ]
+  data.frame(
+    trait                = tr,
+    trait_label           = trait_label(tr),
+    n_sig_unadjusted      = sum(sub$sig_unadj),
+    n_sig_adjusted        = sum(sub$sig_adj),
+    n_lost                = sum(sub$status == "Loses significance"),
+    n_gained              = sum(sub$status == "Gains significance"),
+    cor_beta_unadj_adj    = round(cor(sub$beta_unadj, sub$beta_adj), 4)
+  )
+}))
+summary_by_trait <- summary_by_trait[order(summary_by_trait$n_lost, decreasing = TRUE), ]
+print(summary_by_trait, row.names = FALSE)
+
+write.csv(summary_by_trait, file.path(output_dir, "step5_extreme_adjustment_summary_by_trait.csv"), row.names = FALSE)
+```
+
+### Metabolites underlying the `MetS_case` row
+
+The summary table above collapses `MetS_case` down to two counts
+(`n_sig_unadjusted` = 305, `n_sig_adjusted` = 296). Here are the actual
+metabolite lists behind those two numbers, plus which metabolites moved
+between the two sets (lost/gained significance once Extreme is adjusted
+for):
+
+```{r step5-metscase-metabolite-lists}
+mc <- compare[compare$trait == "MetS_case", ]
+mc <- mc[order(mc$p_unadj), ]
+
+metabolites_sig_unadjusted <- mc$metabolite[mc$sig_unadj]
+metabolites_sig_adjusted   <- mc$metabolite[mc$sig_adj]
+
+cat("Metabolites significant for MetS_case, UNADJUSTED (n =",
+    length(metabolites_sig_unadjusted), "):\n")
+print(metabolites_sig_unadjusted)
+
+cat("\nMetabolites significant for MetS_case, ADJUSTED for Extreme (n =",
+    length(metabolites_sig_adjusted), "):\n")
+print(metabolites_sig_adjusted)
+
+cat("\nLost significance after adjusting for Extreme (n =",
+    sum(mc$status == "Loses significance"), "):\n")
+print(mc$metabolite[mc$status == "Loses significance"])
+
+cat("\nGained significance after adjusting for Extreme (n =",
+    sum(mc$status == "Gains significance"), "):\n")
+print(mc$metabolite[mc$status == "Gains significance"])
+
+write.csv(mc[, c("metabolite","beta_unadj","q_unadj","sig_unadj",
+                  "beta_adj","q_adj","sig_adj","status")],
+          file.path(output_dir, "step5_metscase_metabolite_list.csv"), row.names = FALSE)
+```
+
+Visualizing the overlap between the two `MetS_case` metabolite sets (reusing
+the same 2-circle Venn helper from Step 3):
+
+```{r step5-metscase-venn}
+n_unadj_only <- length(setdiff(metabolites_sig_unadjusted, metabolites_sig_adjusted))
+n_adj_only   <- length(setdiff(metabolites_sig_adjusted, metabolites_sig_unadjusted))
+n_both       <- length(intersect(metabolites_sig_unadjusted, metabolites_sig_adjusted))
+
+cat("Significant unadjusted only (lost after adjustment):", n_unadj_only, "\n")
+cat("Significant adjusted only (gained after adjustment):", n_adj_only, "\n")
+cat("Significant in both:", n_both, "\n")
+
+draw_venn2(n_unadj_only, n_adj_only, n_both,
+           labels = c("Sig. unadjusted", "Sig. adjusted for Extreme"))
+```
+
+Steps 2-3 found essentially **no** univariate metabolite differences between
+Extreme and Mixed. That's a per-metabolite test, though — a joint,
+multivariate model might still separate the groups even if no single
+metabolite does. This section builds simple cross-validated logistic
+regression classifiers (base R only — `glm()` plus a hand-rolled k-fold CV
+and AUC, no extra packages) to test that directly, and to compare against
+how well metabolites predict actual MetS case status for context.
+
+For each comparison, a model is fit using:
+
+- the top `k` metabolites (selected by univariate screening **within the
+  training fold only**, to avoid leakage) + age + sex, and
+- a baseline using age + sex alone (no metabolites),
+
+evaluated by out-of-fold AUC over 10-fold stratified cross-validation.
+
+```{r step6-predict-setup}
+# Mann-Whitney based AUC (no pROC/ROCR needed)
+auc_fn <- function(prob, label) {
+  pos <- prob[label == 1]; neg <- prob[label == 0]
+  n1 <- length(pos); n0 <- length(neg)
+  r <- rank(c(pos, neg))
+  (sum(r[1:n1]) - n1 * (n1 + 1) / 2) / (n1 * n0)
+}
+
+# k-fold stratified CV logistic regression with per-fold univariate feature screening
+run_cv_logistic <- function(data, outcome_col, pos_label, metabolites, covars,
+                             k_top = 8, n_folds = 10, seed = 1) {
+  set.seed(seed)
+  d <- data
+  y <- as.integer(d[[outcome_col]] == pos_label)
+  n <- nrow(d)
+  folds <- integer(n)
+  for (lab in unique(y)) {
+    idx <- which(y == lab)
+    folds[idx] <- sample(rep(1:n_folds, length.out = length(idx)))
+  }
+  oof_pred <- rep(NA_real_, n)
+  fold_feats <- vector("list", n_folds)
+  for (f in 1:n_folds) {
+    train_idx <- which(folds != f); test_idx <- which(folds == f)
+    train <- d[train_idx, ]; test <- d[test_idx, ]
+    ytr <- y[train_idx]
+    if (k_top > 0) {
+      pvals <- sapply(metabolites, function(mb) {
+        fit <- tryCatch(stats::glm(ytr ~ train[[mb]], family = binomial), error = function(e) NULL)
+        if (is.null(fit)) return(1)
+        s <- summary(fit)$coefficients
+        if (nrow(s) < 2) return(1)
+        s[2, 4]
+      })
+      top_feats <- names(sort(pvals))[1:min(k_top, length(pvals))]
+    } else {
+      top_feats <- character(0)
+    }
+    fold_feats[[f]] <- top_feats
+    form <- as.formula(paste("y_tr ~", paste(c(top_feats, covars), collapse = " + ")))
+    train_df <- train[, c(top_feats, covars), drop = FALSE]
+    train_df$y_tr <- ytr
+    fit <- suppressWarnings(stats::glm(form, data = train_df, family = binomial))
+    test_df <- test[, c(top_feats, covars), drop = FALSE]
+    oof_pred[test_idx] <- suppressWarnings(stats::predict.glm(fit, newdata = test_df, type = "response"))
+  }
+  list(pred = oof_pred, y = y, auc = auc_fn(oof_pred, y), fold_feats = fold_feats)
+}
+covars <- c(age_col, sex_col)
+```
+
+```{r step6-predict-run}
+em_subset <- merged[merged$MetS_Group %in% c("Mixed", "Extreme"), ]
+em_subset$MetS_Group <- factor(em_subset$MetS_Group, levels = c("Mixed", "Extreme"))
+
+eh_subset <- merged[merged$MetS_Group %in% c("Healthy", "Extreme"), ]
+eh_subset$MetS_Group <- factor(eh_subset$MetS_Group, levels = c("Healthy", "Extreme"))
+
+mh_subset <- merged[merged$MetS_Group %in% c("Healthy", "Mixed"), ]
+mh_subset$MetS_Group <- factor(mh_subset$MetS_Group, levels = c("Healthy", "Mixed"))
+
+comparisons <- list(
+  list(name = "Extreme vs Mixed",   data = em_subset, pos = "Extreme"),
+  list(name = "Extreme vs Healthy", data = eh_subset, pos = "Extreme"),
+  list(name = "Mixed vs Healthy",   data = mh_subset, pos = "Mixed")
+)
+
+pred_results <- do.call(rbind, lapply(comparisons, function(cmp) {
+  full_model <- run_cv_logistic(cmp$data, "MetS_Group", cmp$pos, metabolite_cols, covars, k_top = 8)
+  metab_only <- run_cv_logistic(cmp$data, "MetS_Group", cmp$pos, metabolite_cols, character(0), k_top = 8)
+  baseline   <- run_cv_logistic(cmp$data, "MetS_Group", cmp$pos, metabolite_cols, covars, k_top = 0)
+  data.frame(
+    comparison        = cmp$name,
+    n                  = nrow(cmp$data),
+    auc_metab_age_sex  = round(full_model$auc, 3),
+    auc_metab_only     = round(metab_only$auc, 3),
+    auc_age_sex_only   = round(baseline$auc, 3)
+  )
+}))
+
+print(pred_results, row.names = FALSE)
+write.csv(pred_results, file.path(output_dir, "step6_prediction_auc_summary.csv"), row.names = FALSE)
+```
+
+```{r step6-predict-plot}
+plot_df <- t(as.matrix(pred_results[, c("auc_metab_age_sex","auc_metab_only","auc_age_sex_only")]))
+colnames(plot_df) <- pred_results$comparison
+
+pdf(file.path(output_dir, "AUC_barplot_v0.pdf"), width = 8, height = 6)
+
+bp <- barplot(plot_df, beside = TRUE, ylim = c(0, 1),
+              col = c("steelblue","darkorange","grey70"),
+              legend.text = c("Metabolites + age + sex","Metabolites only","Age + sex only"),
+              args.legend = list(x = "top", bty = "n", cex = 0.8, horiz = TRUE),
+              ylab = "Cross-validated AUC",
+              main = "Predicting MetS group membership from metabolites")
+abline(h = 0.5, lty = 2, col = "red")
+text(bp, plot_df + 0.03, labels = sprintf("%.2f", plot_df), cex = 0.7)
+dev.off()
+
+```
+
+
+```{r step6-predict-plot using ggplot}
+library(ggplot2)
+library(tidyr)
+
+# Order comparisons by descending AUC (using the full model as the sort key)
+comparison_order <- pred_results$comparison[order(-pred_results$auc_metab_age_sex)]
+
+# Reshape to long format for ggplot
+auc_long <- pivot_longer(
+  pred_results[, c("comparison", "auc_metab_age_sex", "auc_metab_only", "auc_age_sex_only")],
+  cols = c("auc_metab_age_sex", "auc_metab_only", "auc_age_sex_only"),
+  names_to = "Model", values_to = "AUC"
+)
+
+auc_long$comparison <- factor(auc_long$comparison, levels = comparison_order)
+auc_long$Model <- factor(auc_long$Model,
+                          levels = c("auc_metab_age_sex", "auc_metab_only", "auc_age_sex_only"),
+                          labels = c("Metabolites + age + sex", "Metabolites only", "Age + sex only"))
+
+p_auc <- ggplot(auc_long, aes(x = comparison, y = AUC, fill = Model)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  geom_text(aes(label = sprintf("%.2f", AUC)),
+            position = position_dodge(width = 0.8), vjust = -0.4, size = 3) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "red") +
+  scale_fill_manual(values = c("steelblue", "darkorange", "grey70")) +
+  scale_y_continuous(limits = c(0, 1), expand = expansion(mult = c(0, 0.08))) +
+  labs(x = NULL, y = "Cross-validated AUC",
+       title = "Predicting MetS group from metabolites",
+       fill = NULL) +
+  theme_minimal(base_size = 13) +
+  theme(legend.position = "top",
+        panel.grid.major.x = element_blank())
+
+p_auc
+
+ggsave(file.path(output_dir, "AUC_barplot.png"), plot = p_auc,
+       width = 8, height = 6, dpi = 600)
+
+ggsave(file.path(output_dir, "AUC_barplot.pdf"), plot = p_auc,
+       width = 8, height = 6, dpi = 600)
+``` 
+
+
+**Interpretation:** metabolites are strong independent predictors of actual
+MetS case status — for Extreme vs. Healthy and Mixed vs. Healthy, the
+metabolites-only model (AUC ≈ 0.80-0.82) already outperforms age and sex
+alone (AUC ≈ 0.66-0.70) by a wide margin, and combining metabolites with
+age/sex pushes performance higher still (AUC ≈ 0.83-0.84) — metabolic
+information is doing most of the work here, not demographics. In sharp
+contrast, **no model — metabolites, age/sex, or both combined — meaningfully
+separates Extreme from Mixed** (AUC ≈ 0.56-0.60 across all three models,
+barely above the chance line at 0.5, and the combined model is no better
+than age/sex alone). This corroborates the Step 2-3 finding from a
+completely different angle: the 0.6 archetype-purity threshold does not
+correspond to a learnable signature in metabolites *or* demographics, and is
+not simply a power issue specific to univariate testing.
+
+Step 6 selected its top-the metabolites independently within each CV fold, so
+the *exact* feature set can vary fold to fold. To get a single, stable
+answer to "which metabolites actually drive each model", this step counts
+how often each metabolite was selected across the 10 folds (a simple,
+package-free form of **stability selection** — a metabolite chosen in
+10/10 folds is far more trustworthy than one chosen in 2/10), and reports
+its effect size (odds ratio, p, FDR q) from a single age/sex-adjusted model
+fit on the full comparison-specific data set.
+
+```{r step7-stability-selection}
+get_adj_univariate <- function(data, outcome_col, pos_label, metabolite, covars) {
+  y <- as.integer(data[[outcome_col]] == pos_label)
+  df <- data[, c(metabolite, covars)]
+  df$y <- y
+  form <- as.formula(paste("y ~", paste(c(metabolite, covars), collapse = " + ")))
+  fit <- glm(form, data = df, family = binomial)
+  s <- summary(fit)$coefficients
+  c(OR = exp(s[metabolite, 1]), p = s[metabolite, 4])
+}
+
+posthoc_results <- list()
+for (cmp in comparisons) {
+  r <- run_cv_logistic(cmp$data, "MetS_Group", cmp$pos, metabolite_cols, covars, k_top = 8)
+  freq <- sort(table(unlist(r$fold_feats)), decreasing = TRUE)
+  top_n <- names(freq)[1:min(8, length(freq))]
+
+  tab <- do.call(rbind, lapply(top_n, function(mb) {
+    st <- get_adj_univariate(cmp$data, "MetS_Group", cmp$pos, mb, covars)
+    data.frame(metabolite = mb,
+               times_selected_of_10 = as.integer(freq[mb]),
+               OR = round(st["OR"], 3),
+               p  = signif(st["p"], 3))
+  }))
+  tab$q <- round(p.adjust(tab$p, method = "BH"), 4)
+  posthoc_results[[cmp$name]] <- tab
+
+  cat("\n---", cmp$name, ": top metabolites driving the prediction ---\n")
+  print(tab, row.names = FALSE)
+}
+
+write.csv(do.call(rbind, lapply(names(posthoc_results), function(nm) {
+  cbind(comparison = nm, posthoc_results[[nm]])
+})), file.path(output_dir, "step7_posthoc_predictive_metabolites.csv"), row.names = FALSE)
+```
+
+```{r step7-stability-plot, fig.height=8}
+pdf(file.path(output_dir, "posthoc_selection_frequency.pdf"), width = 17, height = 6)
+
+par(mfrow = c(1, 3),
+    mar = c(5, 10, 4, 2),    # bottom, left, top, right margin per panel (more padding)
+    oma = c(1, 1, 1, 1),     # outer margin around the whole figure
+    mgp = c(3, 1, 0))        # distance: axis title, axis labels, axis line
+
+for (nm in names(posthoc_results)) {
+  tab <- posthoc_results[[nm]]
+  tab <- tab[order(tab$times_selected_of_10), ]
+  barplot(tab$times_selected_of_10, names.arg = tab$metabolite, horiz = TRUE,
+          las = 1, col = "steelblue", xlim = c(0, 10),
+          main = paste0(nm, ": metabolite selection frequency (10 CV folds)"),
+          xlab = "Times selected across 10 folds",
+          cex.names = 1.1, cex.axis = 1.2, cex.lab = 1.3, cex.main = 1.2,
+          space = 0.6)   # adds space *within* each panel, between bars
+}
+par(mfrow = c(1, 1))
+
+dev.off()
+```
+
+
+
+```{r step7-stability-plot, fig.height=8}
+
+library(ggplot2)
+library(tidyr)
+library(ggpubr)
+
+mets_colors <- c("Healthy" = "gray", "Mixed" = "orange", "Extreme" = "red")
+
+# Read the saved post-hoc table instead of relying on posthoc_results in memory
+posthoc_csv <- read.csv("merge_MetS_groups_vf_results/step7_posthoc_predictive_metabolites.csv",stringsAsFactors = FALSE)
+em_subset <- merged[merged$MetS_Group %in% c("Mixed", "Extreme"), ]
+em_subset$MetS_Group <- factor(em_subset$MetS_Group, levels = c("Mixed", "Extreme"))
+
+eh_subset <- merged[merged$MetS_Group %in% c("Healthy", "Extreme"), ]
+eh_subset$MetS_Group <- factor(eh_subset$MetS_Group, levels = c("Healthy", "Extreme"))
+
+mh_subset <- merged[merged$MetS_Group %in% c("Healthy", "Mixed"), ]
+mh_subset$MetS_Group <- factor(mh_subset$MetS_Group, levels = c("Healthy", "Mixed"))
+
+comparison_data <- list(
+  "Extreme vs Mixed"   = em_subset,
+  "Extreme vs Healthy" = eh_subset,
+  "Mixed vs Healthy"   = mh_subset
+)
+
+posthoc_boxplot_list <- list()
+
+for (cmp_name in unique(posthoc_csv$comparison)) {
+  top_n <- posthoc_csv$metabolite[posthoc_csv$comparison == cmp_name]
+  cmp_data <- comparison_data[[cmp_name]]
+
+  plot_df <- cmp_data[, c(top_n, "MetS_Group")]
+  plot_long <- pivot_longer(plot_df, cols = all_of(top_n),
+                             names_to = "Metabolite", values_to = "Level")
+  plot_long$Metabolite <- factor(plot_long$Metabolite, levels = top_n)
+
+  p <- ggplot(plot_long, aes(x = MetS_Group, y = Level, fill = MetS_Group)) +
+    geom_boxplot(outlier.shape = NA, alpha = 0.8) +
+    geom_jitter(width = 0.15, size = 0.6, alpha = 0.4) +
+    facet_wrap(~ Metabolite, scales = "free_y", ncol = 4) +
+    scale_fill_manual(values = mets_colors) +
+    stat_compare_means(method = "wilcox.test", label = "p.format", size = 3) +
+    theme_bw() +
+    theme(legend.position = "none",
+          strip.text = element_text(size = 8),
+          axis.text.x = element_text(angle = 45, hjust = 1)) +
+    labs(x = NULL, y = "Metabolite level",
+         title = paste0("Top stability-selected metabolites: ", cmp_name))
+
+  print(p)
+  posthoc_boxplot_list[[cmp_name]] <- p
+
+  ggsave(file.path(output_dir, paste0("step7_boxplots_", gsub(" ", "_", cmp_name), ".png")),
+         plot = p, width = 10, height = 7, dpi = 600)
+}
+
+``` 
+
+
+**What drives each model:** for **Extreme vs Healthy** and **Mixed vs
+Healthy**, the predictions are driven almost entirely by a small, highly
+correlated cluster of **triglyceride (TG) and diglyceride (DG) species**
+(e.g. `TG(16:0/34:0)`, `TG(18:0/34:2)`), each selected in 9-10/10 folds with
+large, highly significant odds ratios (OR ≈ 4.3-5.5, q < 0.001) — consistent
+with the strong lipid-trait signal already seen in Steps 1 and 2. For
+**Extreme vs Mixed**, despite the model's weak overall AUC, the *same small
+set* of metabolites is nonetheless picked consistently (`ADMA`, `AconAcid`
+and `SDMA` in 10/10 folds; `C12` in 9/10) — and notably, these are exactly
+the metabolites flagged in Step 5 as **gaining** significance once Extreme
+status was adjusted for. Their individual effects are modest (OR 0.59-0.70)
+and the resulting model still barely beats chance, but this is a genuine,
+reproducible — if weak — signal, rather than noise: arginine-methylation
+markers (ADMA/SDMA) and aconitate appear to track the archetype-purity
+gradient even though no single metabolite, nor the full panel, separates
+the two groups reliably enough to be clinically useful.
+
+## Session info
+
+```{r session-info}
+sessionInfo()
+```

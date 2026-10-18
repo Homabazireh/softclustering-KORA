@@ -1,0 +1,1625 @@
+---
+title: "Revised. Meatbolomics. Soft clustering"
+author: "Homa Bazireh"
+date: "2025-05-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, error = TRUE)
+```
+
+---
+#Package installation
+```{r}
+install.packages("ggfortify")
+install.packages("reshape")
+install.packages("circlize")
+
+```
+
+
+#Retriving the libraries
+```{r}
+library(glmnet)
+library("nestedcv")
+library("glmnet")
+library("modeltools")
+library("archetypes")
+library("stats4")
+library("nnls")
+library("vcd")
+library(archetypes)
+library(factoextra)
+library(FactoMineR)
+library(scatterplot3d)
+library(plotly)
+library(ggplot2)
+library(ggsci)
+library(CBCgrps)
+library(pheatmap)
+library(corrplot)
+library(ggsankey)
+library(ggplot2)
+library(dplyr)
+library(ggalluvial)
+library(ggpubr)
+library(tidyr)
+library(dplyr)
+library(broom)
+library(naniar)
+library(mice)
+library(Amelia)
+library(glmnet)
+library(archetypal)
+library(corrplot)
+library(stats)
+library(rgl)  # For interactive 3D visualization
+library(fossil) #for ARI 
+library(clusterCrit)
+library(knitr)
+library(kableExtra)
+library(kohonen)
+library(fclust)
+library(fpc)
+library(dbscan)
+library(clusterSim)
+library(gridExtra)
+library(viridis)
+library(zip)
+library(ggfortify)
+library(orca)
+library(webshot)
+library(stats)
+library(bubbleHeatmap)
+library(circlize)
+library(ComplexHeatmap)
+library(patchwork)
+library(stringr)
+
+```
+
+
+
+##Emptying all the variables in the working station and set the working directpry
+```{r}
+rm(list = ls(all.names = TRUE))
+
+setwd(Sys.getenv("KORA_RUN_DIR"))
+```
+
+
+##Loading the clincical variables and proteomics data
+```{r}
+#Load the clinical variables from KORA
+Data <- read.csv(file = "clinical.csv", dec = ".", sep = ";")
+
+Data <- as.data.frame(Data)
+
+Data.soft <- Data[, c("u3talteru", "u3csex", "u3tgewi", "u3tgroe", "u3tbmi", "u3tbmiwho", "u3twhrat", "u3twhratc", "u3tsysmm", "u3tdiamm", "u3twhoish", "u3tglukfastn", "u3tgluk2n", "u3tdm110y15", "u3tinsfastn", "u3tins2n", "u3tmsidfup", "u3thoma2_b", "u3thoma2_s", "u3thoma2_ir", "u3tquickin", "u3lk_choln", "u3lk_hdln", "u3lk_ldln", "u3lk_trin", "u3lk_krean", "u3l_hbavn", "u3h_crp")]
+
+dim(Data.soft)
+
+##Loading Scaled.log.Trans.Metabolomics data 
+load("Scaled.log.Trans.Metabolomics.RData")
+dim(Scaled.log.Trans.Metabolomics)
+#Loading the Metabolites data provided by KORA
+Metabolomics.Data.P500 <- read.csv(file = "metabolites_p500.csv")
+dim(Metabolomics.Data.P500)
+```
+
+
+
+#Subsetting the proteomics and metabolomicsi indicator from the dataset 
+```{r}
+AQ = Data[, 9]
+AQ[is.na(AQ)] <- "xyz"
+AQ <- as.data.frame(AQ)
+colnames(AQ) = "u3n_metabBiocrP500_ff4"
+```
+
+
+#Merging the data.soft with the metabolomics and proteomics indicator
+```{r}
+Data.soft <- cbind(AQ, Data.soft)
+dim(Data.soft )
+
+```
+
+
+##Loading as.robust
+```{r}
+load("as.robust.RData")
+```
+
+##Loading assignment for later use 
+```{r}
+load("assignments_a4.RData")
+```
+```{r}
+a6 <- as.robust[[6]]
+assignments_a6 <- bestModel(a6)$alphas  # Extract archetype scores
+
+a4 <- as.robust[[4]]
+assignments_a4 <- bestModel(a4)$alphas  # Extract archetype scores
+```
+
+
+
+#Renaming the assignment to the archetypes 
+```{r}
+colnames(assignments_a4) = c("Archetypes 1","Archetypes 2","Archetypes 3","Archetypes 4")
+```
+
+#Data cleaning of the clinical variables and normalisation
+```{r}
+Data.soft <- na.omit(Data.soft)
+dim(Data.soft)
+```
+##Normalising the data.soft
+
+```{r}
+Data.soft <- as.data.frame(Data.soft)
+Data.soft_subset <- Data.soft[, !(names(Data.soft) %in% c("u3n_metabBiocrP500_ff4", 
+                                                          "u3csex", 
+                                                          "u3tbmiwho", 
+                                                          "u3twhratc", 
+                                                          "u3twhoish", 
+                                                          "u3tdm110y15", 
+                                                          "u3tmsidfup"))]
+
+numeric_cols <- names(Data.soft_subset)[sapply(Data.soft_subset, is.numeric)]  # Get names of numeric columns
+#### Apply the transformation to each numeric column in the original Data.soft and then viewing the data 
+Data.soft[numeric_cols] <- lapply(Data.soft[numeric_cols], function(col) { 
+  qnorm((rank(col, na.last = "keep") - 0.5) / sum(!is.na(col)))
+})
+```
+
+
+##Checking the normalisation of Data.soft uisng histogram
+```{r}
+hist(as.matrix(Data.soft[,-c(1,3,7,9,12,15,18)]))
+```
+
+
+#Checking the normalisation of the metabolomics data using histogram
+##Histogram of proteomics
+```{r}
+##The first coloumn is the indicator and that's why it should be removed from the histogram
+hist(as.matrix(Scaled.log.Trans.Metabolomics[,-c(1,3,7,9,12,15,18)]),
+     breaks = 50,
+     col = "skyblue",
+     main = "Histogram of All Scaled Protein Values",
+     xlab = "Scaled Protein")
+
+
+##Checking if the data is scaled or not
+means <- apply(Scaled.log.Trans.Metabolomics[,-1], 2, mean)
+sds <- apply(Scaled.log.Trans.Metabolomics[,-1], 2, sd)
+summary(means)  # Should be close to 0
+summary(sds)    # Should be close to 1
+
+```
+
+
+
+###Merging the datasoft with the archetype score 
+```{r}
+Merged.Data.soft = cbind(Data.soft,assignments_a4)
+dim(Merged.Data.soft)
+```
+
+
+##Merging the data.soft with Metabolomics data 
+```{r}
+Merged.Metabolomics.Data.soft <- merge(Merged.Data.soft, Scaled.log.Trans.Metabolomics, by= "u3n_metabBiocrP500_ff4")
+dim(Merged.Metabolomics.Data.soft)
+```
+#Numbers of metabolites
+```{r}
+
+dim(Scaled.log.Trans.Metabolomics)
+
+#Numbers of people in the data soft who have the metabolites data
+length(which(Data.soft$u3n_metabBiocrP500_ff4 != "xyz"))
+
+#some of the participants are not common both datasets(hich IDs don't match)
+# See which IDs don't match
+setdiff(Scaled.log.Trans.Metabolomics$u3n_metabBiocrP500_ff4, 
+        Data.soft$u3n_metabBiocrP500_ff4[Data.soft$u3n_metabBiocrP500_ff4 != "xyz"])
+#checking the exact common ID in both dataset
+ sum(Data.soft$u3n_metabBiocrP500_ff4 %in% Scaled.log.Trans.Metabolomics$u3n_metabBiocrP500_ff4)
+ 
+ #Missing values 
+ 1921-863
+ 
+```
+
+
+
+#Missing values visalisation in the Merged.Data
+```{r}
+missing <- missmap(Merged.Metabolomics.Data.soft, main = "Missing values vs observed")
+
+vis_miss(Merged.Metabolomics.Data.soft)
+
+gg_miss_var(Merged.Metabolomics.Data.soft)
+
+gg_miss_upset(Merged.Metabolomics.Data.soft)
+
+md.pattern(Merged.Metabolomics.Data.soft)
+```
+
+#Removing missing values
+```{r}
+dim(Merged.Metabolomics.Data.soft)
+
+Merged.Metabolomics.Data.soft <- na.omit(Merged.Metabolomics.Data.soft)
+dim(Merged.Metabolomics.Data.soft)
+```
+
+#Saving the merged proteomics and clinical data with archetype scores
+```{r}
+write.csv(Merged.Metabolomics.Data.soft, file = "Merged.Metabolomics.Data.soft.csv", row.names = FALSE)
+save(Merged.Metabolomics.Data.soft, file = "Merged.Metabolomics.Data.soft.RData")
+dim(Merged.Metabolomics.Data.soft)
+```
+
+##Loading dataset for later use
+```{r}
+load("Merged.Metabolomics.Data.soft.RData")
+dim(Merged.Metabolomics.Data.soft)
+```
+
+##Scaling the archetypes score 
+##After scaling the archetypes scores the results were better and the estimate of regression increased 
+```{r}
+Merged.Metabolomics.Data.soft$`Archetypes 1`<- scale(Merged.Metabolomics.Data.soft$`Archetypes 1`, scale = TRUE)
+Merged.Metabolomics.Data.soft$`Archetypes 2`<- scale(Merged.Metabolomics.Data.soft$`Archetypes 2`, scale = TRUE)
+Merged.Metabolomics.Data.soft$`Archetypes 3`<- scale(Merged.Metabolomics.Data.soft$`Archetypes 3`, scale = TRUE)
+Merged.Metabolomics.Data.soft$`Archetypes 4`<- scale(Merged.Metabolomics.Data.soft$`Archetypes 4`, scale = TRUE)
+```
+
+
+##Optional 
+##Defining and Identifying the archetypes based on the tresshold
+```{r}
+Extreme.archetype_indices <- which(assignments_a4 > 0.7, arr.ind = TRUE)
+Participants.number <- data.frame(
+  Participant_Number = Extreme.archetype_indices[, 1],
+  Archetype_Number = Extreme.archetype_indices[, 2]
+)
+Merged.Metabolomics.Data.soft$Extreme_Archetype_Number <- NA
+for (i in 1:nrow(Participants.number)) {
+  participant_id <- Participants.number$Participant_Number[i]
+  archetype_id <- Participants.number$Archetype_Number[i]
+  
+  Merged.Metabolomics.Data.soft$Extreme_Archetype_Number[participant_id] <- archetype_id
+}
+mixed_etiology <- which(apply(assignments_a4, 1, function(x) all(x < 0.7)))
+Merged.Metabolomics.Data.soft$Extreme_Archetype_Number[mixed_etiology] <- "Mixed Etiology"
+```
+
+
+
+#Running linear regression only for the proteins (outcome :archetype and exposure : protein and covariates: adjust for age and sex)
+```{r}
+clinical_vars <- Merged.Metabolomics.Data.soft[, c("u3talteru", "u3csex")]
+archetype_vars <- Merged.Metabolomics.Data.soft[, c("Archetypes 1", "Archetypes 2", "Archetypes 3", "Archetypes 4")]
+metabolite_vars <- Merged.Metabolomics.Data.soft[, 34:421]
+results_list_metabolites <- list()
+for (metabolite in colnames(metabolite_vars)) {
+  metabolite_results <- list()
+  
+  for (archetype in colnames(archetype_vars)) {
+    # Build the formula: archetype ~ protein + clinical covariates
+    # Use backticks to handle spaces/special characters in column names
+    formula_str <- paste0("`", archetype, "` ~ `", metabolite, "` + u3talteru + u3csex")
+    model <- lm(as.formula(formula_str), data = Merged.Metabolomics.Data.soft)
+    
+    coefs <- summary(model)$coefficients
+    conf_intervals <- confint.default(model)
+    r2 <- summary(model)$r.squared
+    
+    # Ensure the protein is present in the coefficient table
+    if (paste0("`", metabolite, "`") %in% rownames(coefs)) {
+      coef_name <- paste0("`", metabolite, "`")
+    } else if (metabolite %in% rownames(coefs)) {
+      coef_name <- metabolite
+    } else {
+      coef_name <- NA
+    }
+    
+    if (!is.na(coef_name)) {
+      estimate <- coefs[coef_name, "Estimate"]
+      se <- coefs[coef_name, "Std. Error"]
+      p_value <- coefs[coef_name, "Pr(>|t|)"]
+      ci_lower <- conf_intervals[coef_name, 1]
+      ci_upper <- conf_intervals[coef_name, 2]
+    } else {
+      estimate <- NA
+      se <- NA
+      p_value <- NA
+      ci_lower <- NA
+      ci_upper <- NA
+    }
+    
+    metabolite_results[[archetype]] <- data.frame(
+      Metabolite = metabolite,
+      Archetype = archetype,
+      Estimate = estimate,
+      Std_Error = se,
+      P_value = p_value,
+      CI_Lower = ci_lower,
+      CI_Upper = ci_upper,
+      R2 = r2,
+      stringsAsFactors = FALSE
+    )
+  }
+  results_list_metabolites[[metabolite]] <- do.call(rbind, metabolite_results)
+}
+final_results_metabolites <- do.call(rbind, results_list_metabolites)
+final_results_metabolites$Adjusted_P_value <- p.adjust(final_results_metabolites$P_value, method = "fdr")
+write.csv(final_results_metabolites, paste0("Metabolite_Archetype_Regression_Results_", Sys.Date(), ".csv"), row.names = FALSE)
+significant_results <- final_results_metabolites[final_results_metabolites$Adjusted_P_value < 0.05, ]
+head(significant_results[order(significant_results$Adjusted_P_value), ])
+
+range(significant_results$Estimate)
+```
+
+#Filtering the metabolites based on the estimate as well(first we filtered based on the P adjusted value and now filter based on the estimate)
+```{r}
+significant_results_filtered <- significant_results[
+  abs(significant_results$Estimate) > 0.2, ]
+significant_results_filtered
+```
+
+
+##The significant numbers of proteins 
+```{r}
+library(dplyr)
+library(stringr)
+significant_results <- significant_results %>%
+  mutate(
+    Metabolite_Short = case_when(
+      str_detect(Metabolite, "\\|[A-Za-z0-9\\.]+_HUMAN") ~ str_extract(Metabolite, "(?<=\\|)[A-Za-z0-9\\.]+(?=_HUMAN)"),
+      str_detect(Metabolite, "__[A-Z0-9]+_HUMAN") ~ str_extract(Metabolite, "(?<=__)[A-Z0-9]+(?=_HUMAN)"),
+      TRUE ~ Metabolite  # If pattern doesn't match, keep full name
+    )
+  )
+
+# Optional: View the extracted short protein names
+head(significant_results$Protein_Short)
+csv_filename <- paste0("significant_proteins_extracted_", Sys.Date(), ".csv")
+write.csv(significant_results, csv_filename, row.names = FALSE)
+
+################################
+proteins_by_archetype <- significant_results %>%
+  group_by(Archetype) %>%
+  summarise(
+    Significant_Proteins = paste(unique(Protein_Short), collapse = "; "),
+    Protein_Count = n_distinct(Protein_Short)
+  ) %>%
+  arrange(Archetype)
+
+proteins_by_archetype
+View(proteins_by_archetype)
+csv_filename <- paste0("proteins_by_archetype_", Sys.Date(), ".csv")
+write.csv(proteins_by_archetype, csv_filename, row.names = FALSE)
+
+```
+
+##Significant numbers of archetypes 
+```{r}
+ table(significant_results$Archetype)
+```
+
+
+##Create top metabolites
+```{r}
+top10_metabolite <- significant_results %>%
+  group_by(Archetype) %>%
+  arrange(Adjusted_P_value, .by_group = TRUE) %>%
+  slice_head(n = 10) %>%
+  ungroup()
+top10_metabolite <- top10_metabolite %>%
+  group_by(Archetype) %>%
+  mutate(Metabolite_Short_Unique = make.unique(Metabolite)) %>%
+  ungroup()
+
+top10_metabolite
+
+```
+
+#Linear regression for dependent variable (proteins ~ clinical varibales )
+#The most discriminative omics variables were then investigated for associations with the clinical phenotypes
+```{r}
+clinical_vars <- Merged.Metabolomics.Data.soft[, 2:29]
+metabolites_merged <- colnames(Merged.Metabolomics.Data.soft)[34:421]
+metabolite_vars <- intersect(top10_metabolite$Metabolite, metabolites_merged)
+# metabolite_vars <- metabolites_merged
+
+metabolite_data <- Merged.Metabolomics.Data.soft[, metabolite_vars]
+top_metabolite_clinic <- cbind(clinical_vars, metabolite_data)
+results_list <- list()
+
+for (metab in colnames(metabolite_data)) {
+  for (clinical in colnames(clinical_vars)) {
+    formula_str <- paste0("`", metab, "` ~ `", clinical, "`")
+    model <- lm(as.formula(formula_str), data = top_metabolite_clinic)
+    coefs <- summary(model)$coefficients
+    conf_intervals <- confint.default(model)
+    r2 <- summary(model)$r.squared
+    
+    # The predictor's coefficient is always the second row
+    estimate <- coefs[2, "Estimate"]
+    se <- coefs[2, "Std. Error"]
+    p_value <- coefs[2, "Pr(>|t|)"]
+    ci_lower <- conf_intervals[2, 1]
+    ci_upper <- conf_intervals[2, 2]
+    
+    results_list[[length(results_list) + 1]] <- data.frame(
+      Metabolite = metab,
+      Clinical = clinical,
+      Estimate = estimate,
+      Std_Error = se,
+      P_value = p_value,
+      CI_Lower = ci_lower,
+      CI_Upper = ci_upper,
+      R2 = r2,
+      stringsAsFactors = FALSE
+    )
+  }
+}
+
+final_results <- do.call(rbind, results_list)
+final_results$Adjusted_P_value <- p.adjust(final_results$P_value, method = "fdr")
+write.csv(final_results, paste0("metabolite_clinical_Regression_Results_", Sys.Date(), ".csv"), row.names = FALSE)
+significant_results_metabolite_clinical <- final_results[final_results$Adjusted_P_value < 0.05, ]
+head(significant_results_metabolite_clinical[order(significant_results_metabolite_clinical$Adjusted_P_value), ])
+
+```
+
+
+
+
+##Renaming clincial varables and then saving the result 
+```{r}
+final_results <- final_results %>%
+  mutate(Clinical = recode(Clinical,
+                                    "u3talteru" = "Age",
+                                    "u3csex" = "Gender",
+                                    "u3tgewi" = "Weight",
+                                    "u3tgroe" = "Height",
+                                    "u3tbmi" = "BMI",
+                                    "u3tbmiwho" = "WHO_BMI_Category",
+                                    "u3twhrat" = "WHR",
+                                    "u3twhratc" = "WHR_Category",
+                                    "u3tsysmm" = "SBP",
+                                    "u3tdiamm" = "DBP",
+                                    "u3twhoish" = "Hypertension",
+                                    "u3tglukfastn" = "Fasting_glucose",
+                                    "u3tgluk2n" = "Glucose_2h",
+                                    "u3tdm110y15" = "Diabetes_WHO",
+                                    "u3tinsfastn" = "Fasting_serum_insulin",
+                                    "u3tins2n" = "Insulin_2h",
+                                    "u3tmsidfup" = "Metabolic_Syndrome_IDF",
+                                    "u3thoma2_b" = "HOMA_Beta",
+                                    "u3thoma2_s" = "HOMA_Sensitivity",
+                                    "u3thoma2_ir" = "HOMA_IR",
+                                    "u3tquickin" = "Insulin_Sensitivity_Quicki",
+                                    "u3lk_choln" = "Cholesterol",
+                                    "u3lk_hdln" = "HDL",
+                                    "u3lk_ldln" = "LDL",
+                                    "u3lk_trin" = "TG",
+                                    "u3lk_krean" = "Creatinine",
+                                    "u3l_hbavn" = "HbA1c",
+                                    "u3h_crp" = "hsCRP"
+  ))
+write.csv(final_results, paste0("metabolite_clinical_Regression_Results_", Sys.Date(), ".csv"), row.names = FALSE)
+```
+
+##Bubble plot for the clinical variables vs proteins
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+significant_results_metabolite_clinical <- significant_results_metabolite_clinical %>%
+  group_by(Clinical) %>%
+  mutate(metabolite_Short_Unique = make.unique(Metabolite)) %>%
+  ungroup()
+significant_results_metabolite_clinical <- significant_results_metabolite_clinical %>%
+  mutate(
+    neg_log10_p = -log10(Adjusted_P_value)
+  )
+
+significant_results_metabolite_clinical <- significant_results_metabolite_clinical %>%
+  mutate(Clinical = recode(Clinical,
+                                    "u3talteru" = "Age",
+                                    "u3csex" = "Gender",
+                                    "u3tgewi" = "Weight",
+                                    "u3tgroe" = "Height",
+                                    "u3tbmi" = "BMI",
+                                    "u3tbmiwho" = "WHO_BMI_Category",
+                                    "u3twhrat" = "WHR",
+                                    "u3twhratc" = "WHR_Category",
+                                    "u3tsysmm" = "SBP",
+                                    "u3tdiamm" = "DBP",
+                                    "u3twhoish" = "Hypertension",
+                                    "u3tglukfastn" = "Fasting_glucose",
+                                    "u3tgluk2n" = "Glucose_2h",
+                                    "u3tdm110y15" = "Diabetes_WHO",
+                                    "u3tinsfastn" = "Fasting_serum_insulin",
+                                    "u3tins2n" = "Insulin_2h",
+                                    "u3tmsidfup" = "Metabolic_Syndrome_IDF",
+                                    "u3thoma2_b" = "HOMA_Beta",
+                                    "u3thoma2_s" = "HOMA_Sensitivity",
+                                    "u3thoma2_ir" = "HOMA_IR",
+                                    "u3tquickin" = "Insulin_Sensitivity_Quicki",
+                                    "u3lk_choln" = "Cholesterol",
+                                    "u3lk_hdln" = "HDL",
+                                    "u3lk_ldln" = "LDL",
+                                    "u3lk_trin" = "TG",
+                                    "u3lk_krean" = "Creatinine",
+                                    "u3l_hbavn" = "HbA1c",
+                                    "u3h_crp" = "hsCRP"
+  ))
+p <- ggplot(significant_results_metabolite_clinical , 
+            aes(x = Clinical, y = metabolite_Short_Unique, size = neg_log10_p, color = Estimate)) +
+  geom_point() +
+  scale_color_gradient2(
+    low = "blue", mid = "white", high = "brown", midpoint = 0, name = "Effect Size"
+  ) +
+  scale_size_continuous(
+    name = "-log10",
+    range = c(3, 10)
+  ) +
+  labs(
+    title = "Top 10 Archetype-Specific Proteins",
+    x = "Phenotypes", y = "Protein"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 14, face = "bold"),
+    legend.position = "right",
+    panel.grid.major = element_line(color = "gray90"),
+    plot.title = element_text(size = 16, face = "bold")
+  )
+
+print(p)
+ggsave("clinical_Proteomics_Bubble_Plot.png", p, 
+       width = 12, height = 8, dpi = 300, bg = "white")
+```
+
+
+
+##Another code for Venn digram 
+```{r}
+library(VennDiagram)
+
+# Extract proteins for each archetype
+list1 <- significant_results$Metabolite[significant_results$Archetype == "Archetypes 1"]
+list2 <- significant_results$Metabolite[significant_results$Archetype == "Archetypes 2"]
+list3 <- significant_results$Metabolite[significant_results$Archetype == "Archetypes 3"]
+list4 <- significant_results$Metabolite[significant_results$Archetype == "Archetypes 4"]
+
+venn_data <- list(
+  "Arch 1" = list1,
+  "Arch 2" = list2,
+  "Arch 3" = list3,
+  "Arch 4" = list4
+)
+
+venn.plot <- venn.diagram(
+  x = venn_data,
+  filename = NULL,
+  fill = c("#8dd3c7", "#fb8072", "#fdb462", "#80b1d3"),
+  alpha = 0.5,
+  cex = 2,
+  cat.cex = 2.5,
+  cat.pos = 0,
+  cat.dist = 0.1,
+  margin = 0.1,
+  main = "Overlap of Archetype-Associated Metabolites",
+  main.cex = 3
+)
+
+grid.newpage()
+grid.draw(venn.plot)
+
+# Save as PNG (not with ggsave)
+#grid.draw(venn.plot)
+#dev.off()
+
+#Pdf
+pdf("venn_diagram.pdf", width = 10, height = 8, bg = "white")
+grid.draw(venn.plot)
+dev.off()
+
+overlap_1_2 <- intersect(list1, list2)
+overlap_1_3 <- intersect(list1, list3)
+overlap_1_4 <- intersect(list1, list4)
+overlap_2_4 <- intersect(list2, list4)
+overlap_2_3 <- intersect(list2, list3)
+overlap_all <- intersect(intersect(intersect(list1, list2), list3), list4)
+unique_to_1 <- setdiff(list1, c(list1, list2, list3))
+```
+
+
+##Counting the Significant proteins
+```{r}
+## Counting the number of significant proteins by archetype
+metabolite_count_by_archetype <- significant_results %>%
+  group_by(Archetype) %>%
+  summarise(
+    significant_results = paste(unique(Metabolite), collapse = "; "),
+    metabolite_count = n_distinct(Metabolite)
+  ) %>%
+  arrange(metabolite_count)
+
+print(metabolite_count_by_archetype)
+
+
+#Total numbers of significant proteins
+```
+
+
+
+##Heatmap for the archetypes and clinical vaiables 
+```{r}
+heatmap_matrix <- significant_results_metabolite_clinical %>%
+  dplyr::select(Adjusted_P_value, Archetype, Estimate, Clinical_Variable) %>%
+  pivot_wider(names_from = Archetype, values_from = Adjusted_P_value) %>%
+  as.data.frame()
+
+
+# Set short names as rownames and remove the column
+colnames(heatmap_matrix) <- heatmap_matrix$Clinical_Variable
+row.names(heatmap_matrix) <- heatmap_matrix$Archetype
+heatmap_matrix <- as.matrix(heatmap_matrix)
+heatmap_matrix <- type.convert(heatmap_matrix, as.is = TRUE)
+heatmap_matrix[!is.finite(heatmap_matrix)] <- 0
+max_abs_value <- max(abs(heatmap_matrix))
+color_breaks <- c(-max_abs_value, -max_abs_value/2, 0, max_abs_value/2, max_abs_value)
+col_fun <- colorRamp2(
+  breaks = color_breaks,
+  colors = c("darkblue", "dodgerblue", "#FFFDD0", "salmon", "darkred"),
+  space = "LAB"
+)
+ht <- Heatmap(
+  matrix = heatmap_matrix,
+  name = "Estimate",
+  col = col_fun,
+  
+  # Row settings - names on right
+  show_row_names = TRUE,
+  row_names_side = "right",  # Changed from "left" to "right"
+  row_names_gp = gpar(fontsize = 8, fontface = "bold"),
+  
+  # Column settings
+  show_column_names = TRUE,
+  column_names_rot = 0,
+  column_names_centered = TRUE,
+  column_names_gp = gpar(fontsize = 10),
+  
+  # Heatmap appearance
+  rect_gp = gpar(col = "gray", lwd = 0.5),
+  border = TRUE,
+  na_col = "lightgray",
+  
+  # Clustering
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  
+  # Legend settings
+  heatmap_legend_param = list(
+    title = "Odds Ratio",
+    title_gp = gpar(fontsize = 10, fontface = "bold"),
+    labels_gp = gpar(fontsize = 7),
+    legend_height = unit(4, "cm"),
+    at = color_breaks,
+    labels = round(color_breaks, 2)
+  )
+)
+draw(ht, 
+     heatmap_legend_side = "right",
+     padding = unit(c(2, 2, 2, 10), "mm")) # Right padding increased to 10mm
+
+# Save as PNG
+png("top_proteins_heatmap.png", 
+    width = 2000,  # Pixel dimensions
+    height = 1500, 
+    res = 300)     # 300 DPI for high quality
+draw(ht, padding = unit(c(2, 2, 2, 10), "mm"))
+dev.off()
+```
+
+
+##Volcano plot
+##Unique protein names(If you are using the protein, should be unique otherwise plot them in shapes)
+```{r}
+library(ggplot2)
+library(ggrepel)
+library(stringr)
+significant_results$negLog10P <- -log10(significant_results$Adjusted_P_value)
+
+
+# Label directionality based on effect size thresholds
+significant_results$significant <- "Not"  # Default: Not Significant
+significant_results$significant[significant_results$Adjusted_P_value < 0.05 & significant_results$Estimate > 0.2] <- "Up"
+significant_results$significant[significant_results$Adjusted_P_value < 0.05 & significant_results$Estimate < -0.2] <- "Down"
+
+# Convert to factor with explicit levels
+significant_results$direction <- factor(significant_results$significant, 
+                                        levels = c("Not", "Up", "Down"))
+
+# Add Protein labels for significant proteins short name hits only
+significant_results$label <- ifelse(
+  significant_results$significant != "Not",
+  significant_results$Metabolite,
+  NA
+)
+
+# Volcano plot with directional coloring
+ggplot(significant_results, aes(x = Estimate, y = negLog10P, color = significant, shape = Archetype)) +
+  geom_point(alpha = 0.7) +
+  ggrepel::geom_text_repel(aes(label = label), na.rm = TRUE) +
+  scale_color_manual(values = c("blue","grey","red")) +
+  geom_vline(xintercept = c(-0.2, 0.2), linetype = "dashed", color = "black") +#Adds vertical dashed lines at x = -0.1 and x = 0.2.
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  theme_minimal() +
+  labs(title = "Volcano Plot of Proteins",
+       x = "Effect Size",
+       y = "-Log10(P-value)",
+       color = "significant")
+
+```
+
+
+##Volcano plot for all the metabolites 
+```{r}
+library(dplyr)
+library(ggplot2)
+library(ggrepel)
+
+# Assume significant_results_filtered is already loaded and prepared
+df1 <- subset(significant_results, Archetype == 1 | Archetype == "Archetypes 1")
+
+# Fix factor order for correct coloring
+df1$significant <- factor(df1$significant, levels = c("Down", "Not", "Up"))
+top_up <- df1 %>%
+  filter(significant == "Up") %>%
+  slice_max(order_by = negLog10P, n = 10, with_ties = FALSE)
+
+top_down <- df1 %>%
+  filter(significant == "Down") %>%
+  slice_max(order_by = negLog10P, n = 10, with_ties = FALSE)
+
+# Add a label only for those in top up or down
+df1$label2 <- ifelse(
+  df1$Metabolite %in% c(top_up$Metabolite, top_down$Metabolite) & df1$significant != "Not",
+  df1$Metabolite,
+  NA
+)
+
+# Volcano plot with correct color mapping
+p1 <- ggplot(df1, aes(x = Estimate, y = negLog10P, color = significant)) +
+  geom_point(alpha = 0.7) +
+  ggrepel::geom_text_repel(aes(label = label2), na.rm = TRUE, max.overlaps = 50) +
+  scale_color_manual(values = c("blue", "grey", "red")) + # Down, Not, Up
+  geom_vline(xintercept = c(-0.2, 0.2), linetype = "dashed", color = "black") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot: Archetype 1",
+    x = "Effect Size",
+    y = "-Log10(Adjusted P-value)",
+    color = "Significance"
+  )
+
+ggsave("volcano_archetype1.png", p1, width = 8, height = 6, dpi = 300, bg = "white")
+p1
+
+
+###
+df1 <- subset(significant_results, Archetype == 2 | Archetype == "Archetypes 2")
+
+# Fix factor order for correct coloring
+df1$significant <- factor(df1$significant, levels = c("Down", "Not", "Up"))
+top_up <- df1 %>%
+  filter(significant == "Up") %>%
+  slice_max(order_by = negLog10P, n = 10, with_ties = FALSE)
+
+top_down <- df1 %>%
+  filter(significant == "Down") %>%
+  slice_max(order_by = negLog10P, n = 10, with_ties = FALSE)
+
+# Add a label only for those in top up or down
+df1$label2 <- ifelse(
+  df1$Metabolite %in% c(top_up$Metabolite, top_down$Metabolite) & df1$significant != "Not",
+  df1$Metabolite,
+  NA
+)
+
+# Volcano plot with correct color mapping
+p2 <- ggplot(df1, aes(x = Estimate, y = negLog10P, color = significant)) +
+  geom_point(alpha = 0.7) +
+  ggrepel::geom_text_repel(aes(label = label2), na.rm = TRUE, max.overlaps = 50) +
+  scale_color_manual(values = c("blue", "grey", "red")) + # Down, Not, Up
+  geom_vline(xintercept = c(-0.2, 0.2), linetype = "dashed", color = "black") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot: Archetype 2",
+    x = "Effect Size",
+    y = "-Log10(Adjusted P-value)",
+    color = "Significance"
+  )
+
+ggsave("volcano_archetype2.png", p2, width = 8, height = 6, dpi = 300,bg = "white")
+p2
+#####
+df1 <- subset(significant_results, Archetype == 3 | Archetype == "Archetypes 3")
+
+# Fix factor order for correct coloring
+df1$significant <- factor(df1$significant, levels = c("Down", "Not", "Up"))
+top_up <- df1 %>%
+  filter(significant == "Up") %>%
+  slice_max(order_by = negLog10P, n = 10, with_ties = FALSE)
+
+top_down <- df1 %>%
+  filter(significant == "Down") %>%
+  slice_max(order_by = negLog10P, n = 10, with_ties = FALSE)
+
+# Add a label only for those in top up or down
+df1$label2 <- ifelse(
+  df1$Metabolite %in% c(top_up$Metabolite, top_down$Metabolite) & df1$significant != "Not",
+  df1$Metabolite,
+  NA
+)
+
+# Volcano plot with correct color mapping
+p3 <- ggplot(df1, aes(x = Estimate, y = negLog10P, color = significant)) +
+  geom_point(alpha = 0.7) +
+  ggrepel::geom_text_repel(aes(label = label2), na.rm = TRUE, max.overlaps = 50) +
+  scale_color_manual(values = c("blue", "grey", "red")) + # Down, Not, Up
+  geom_vline(xintercept = c(-0.2, 0.2), linetype = "dashed", color = "black") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot: Archetype 3",
+    x = "Effect Size",
+    y = "-Log10(Adjusted P-value)",
+    color = "Significance"
+  )
+
+ggsave("volcano_archetype3.png", p3, width = 8, height = 6, dpi = 300,bg = "white")
+p3
+
+#####
+df1 <- subset(significant_results, Archetype == 4| Archetype == "Archetypes 4")
+
+# Fix factor order for correct coloring
+df1$significant <- factor(df1$significant, levels = c("Down", "Not", "Up"))
+top_up <- df1 %>%
+  filter(significant == "Up") %>%
+  slice_max(order_by = negLog10P, n = 10, with_ties = FALSE)
+
+top_down <- df1 %>%
+  filter(significant == "Down") %>%
+  slice_max(order_by = negLog10P, n = 10, with_ties = FALSE)
+
+# Add a label only for those in top up or down
+df1$label2 <- ifelse(
+  df1$Metabolite %in% c(top_up$Metabolite, top_down$Metabolite) & df1$significant != "Not",
+  df1$Metabolite,
+  NA
+)
+
+# Volcano plot with correct color mapping
+p4 <- ggplot(df1, aes(x = Estimate, y = negLog10P, color = significant)) +
+  geom_point(alpha = 0.7) +
+  ggrepel::geom_text_repel(aes(label = label2), na.rm = TRUE, max.overlaps = 50) +
+  scale_color_manual(values = c("blue", "grey", "red")) + # Down, Not, Up
+  geom_vline(xintercept = c(-0.2, 0.2), linetype = "dashed", color = "black") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+  theme_minimal() +
+  labs(
+    title = "Volcano Plot: Archetype 4",
+    x = "Effect Size",
+    y = "-Log10(Adjusted P-value)",
+    color = "Significance"
+  )
+
+ggsave("volcano_archetype3.png", p4, width = 8, height = 6, dpi = 300,bg = "white")
+p4
+
+combined_plot <- (p1 | p2) / (p3 | p4)
+combined_plot
+ggsave("volcano_combined_plot.png", combined_plot, width = 8, height = 6, dpi = 600,bg = "white")
+
+```
+
+
+##Create top metabolites
+```{r}
+top10_metabolite <- significant_results %>%
+  group_by(Archetype) %>%
+  arrange(Adjusted_P_value, .by_group = TRUE) %>%
+  slice_head(n = 10) %>%
+  ungroup()
+top10_metabolite <- top10_metabolite %>%
+  group_by(Archetype) %>%
+  mutate(Metabolite_Short_Unique = make.unique(Metabolite)) %>%
+  ungroup()
+
+top10_metabolite
+
+```
+
+
+##Heatmap of archetypes vs top proteins
+```{r}
+library(tidyr)
+library(dplyr)
+heatmap_matrix <- top10_metabolite %>%
+  dplyr::select(Metabolite, Archetype, Estimate) %>%  # Explicit dplyr call
+  pivot_wider(names_from = Archetype, values_from = Estimate) %>%
+  as.data.frame()
+
+
+# Set short names as rownames and remove the column
+rownames(heatmap_matrix) <- heatmap_matrix$Metabolite
+heatmap_matrix <- heatmap_matrix %>% dplyr::select(-Metabolite)
+heatmap_matrix <- as.matrix(heatmap_matrix)
+heatmap_matrix <- type.convert(heatmap_matrix, as.is = TRUE)
+heatmap_matrix[!is.finite(heatmap_matrix)] <- 0
+max_abs_value <- max(abs(heatmap_matrix))
+color_breaks <- c(-max_abs_value, -max_abs_value/2, 0, max_abs_value/2, max_abs_value)
+col_fun <- colorRamp2(
+  breaks = color_breaks,
+  colors = c("darkblue", "dodgerblue", "#FFFDD0", "salmon", "darkred"),
+  space = "LAB"
+)
+ht <- Heatmap(
+  matrix = heatmap_matrix,
+  name = "Estimate",
+  col = col_fun,
+  
+  # Row settings - names on right
+  show_row_names = TRUE,
+  row_names_side = "right",  # Changed from "left" to "right"
+  row_names_gp = gpar(fontsize = 8, fontface = "bold"),
+  
+  # Column settings
+  show_column_names = TRUE,
+  column_names_rot = 0,
+  column_names_centered = TRUE,
+  column_names_gp = gpar(fontsize = 10),
+  
+  # Heatmap appearance
+  rect_gp = gpar(col = "gray", lwd = 0.5),
+  border = TRUE,
+  na_col = "lightgray",
+  
+  # Clustering
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  
+  # Legend settings
+  heatmap_legend_param = list(
+    title = "Estimate",
+    title_gp = gpar(fontsize = 10, fontface = "bold"),
+    labels_gp = gpar(fontsize = 7),
+    legend_height = unit(4, "cm"),
+    at = color_breaks,
+    labels = round(color_breaks, 2)
+  )
+)
+draw(ht, 
+     heatmap_legend_side = "right",
+     padding = unit(c(2, 2, 2, 10), "mm")) # Right padding increased to 10mm
+
+# Save as PNG
+png("top_proteins_heatmap.png", 
+    width = 2000,  # Pixel dimensions
+    height = 1500, 
+    res = 300)     # 300 DPI for high quality
+draw(ht, padding = unit(c(2, 2, 2, 10), "mm"))
+dev.off()
+```
+
+
+##Creating the bubble plot archetyps vs proteins
+```{r}
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+top10_proteins <- significant_results %>%
+  group_by(Archetype) %>%
+  arrange(Adjusted_P_value, .by_group = TRUE) %>%
+  slice_head(n = 10) %>%
+  ungroup()
+top10_proteins <- top10_proteins %>%
+  mutate(
+    Protein_Short = case_when(
+      str_detect(Protein, "\\|[A-Za-z0-9\\.]+_HUMAN") ~ str_extract(Protein, "(?<=\\|)[A-Za-z0-9\\.]+(?=_HUMAN)"),
+      str_detect(Protein, "__[A-Z0-9]+_HUMAN") ~ str_extract(Protein, "(?<=__)[A-Z0-9]+(?=_HUMAN)"),
+      TRUE ~ Protein
+    )
+  )
+top10_proteins <- top10_proteins %>%
+  group_by(Archetype) %>%
+  mutate(Protein_Short_Unique = make.unique(Protein_Short)) %>%
+  ungroup()
+top10_proteins <- top10_proteins %>%
+  mutate(
+    neg_log10_p = -log10(Adjusted_P_value)
+  )
+p <- ggplot(top10_proteins, 
+            aes(x = Archetype, y = Protein_Short_Unique, size = neg_log10_p, color = Estimate)) +
+  geom_point() +
+  scale_color_gradient2(
+    low = "blue", mid = "white", high = "brown", midpoint = 0, name = "Effect Size"
+  ) +
+  scale_size_continuous(
+    name = "-log10",
+    range = c(3, 10)
+  ) +
+  labs(
+    title = "Top 10 Archetype-Specific Proteins",
+    x = "Archetype", y = "Protein"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 12),
+    axis.text.y = element_text(size = 10),
+    axis.title = element_text(size = 14, face = "bold"),
+    legend.position = "right",
+    panel.grid.major = element_line(color = "gray90"),
+    plot.title = element_text(size = 16, face = "bold")
+  )
+
+print(p)
+ggsave("Archetype_Proteomics_Bubble_Plot.png", p, 
+       width = 12, height = 8, dpi = 300, bg = "white")
+```
+
+
+##Create a forest plot (archetypes and significant metabolites)
+```{r}
+top_metabolite_long <- top10_metabolite %>%
+  group_by(Archetype, Metabolite, CI_Lower, CI_Upper) %>%
+  mutate(
+    Metabolite_Short_Unique = ifelse(duplicated(Metabolite), 
+                                  paste0(Metabolite, "_", Archetype), 
+                                  Metabolite)
+  ) %>%
+  ungroup()
+
+
+
+# Clean and prepare your data
+df_forest <- top_metabolite_long %>%
+  mutate(
+    Metabolite = factor(Metabolite_Short_Unique, levels = rev(unique(Metabolite))),  # reverse for better layout
+    Archetype = factor(Archetype, levels = unique(Archetype))  # keep consistent order
+  )
+
+# Create forest plot
+ggplot(df_forest, aes(x = Estimate, y = Metabolite, color = Archetype)) +
+  geom_point(position = position_dodge(width = 0.7), size = 2) +
+  geom_errorbarh(aes(xmin = CI_Lower, xmax = CI_Upper),
+                 position = position_dodge(width = 0.7), height = 0.3) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "gray40") +
+  facet_wrap(~ Archetype, scales = "free_y", ncol = 1) +
+  theme_minimal(base_size = 12) +
+  theme(
+    strip.text = element_text(face = "bold", size = 14),
+    axis.text.y = element_text(size = 12),
+    axis.title.y = element_blank(),
+    legend.position = "none"
+  ) +
+  xlab("Estimate with 95% CI")
+
+ggsave("forest.plot4.png", width = 9, height = length(unique(df_forest$Metabolite)) * 0.4, dpi = 600, bg = "white")
+
+ggsave("forest.plot4.pdf", width = 9, height = 10, dpi = 600, bg = "white")
+
+
+```
+
+
+
+#Create a heatmap for the archetypes and top proteins
+```{r}
+library(tidyr)
+library(dplyr)
+heatmap_matrix <- top10_proteins %>%
+  dplyr::select(Protein_Short, Archetype, Estimate) %>%  # Explicit dplyr call
+  pivot_wider(names_from = Archetype, values_from = Estimate) %>%
+  as.data.frame()
+
+
+# Set short names as rownames and remove the column
+rownames(heatmap_matrix) <- heatmap_matrix$Protein_Short
+heatmap_matrix <- heatmap_matrix %>% dplyr::select(-Protein_Short)
+heatmap_matrix <- as.matrix(heatmap_matrix)
+heatmap_matrix <- type.convert(heatmap_matrix, as.is = TRUE)
+heatmap_matrix[!is.finite(heatmap_matrix)] <- 0
+max_abs_value <- max(abs(heatmap_matrix))
+color_breaks <- c(-max_abs_value, -max_abs_value/2, 0, max_abs_value/2, max_abs_value)
+col_fun <- colorRamp2(
+  breaks = color_breaks,
+  colors = c("darkblue", "dodgerblue", "#FFFDD0", "salmon", "darkred"),
+  space = "LAB"
+)
+ht <- Heatmap(
+  matrix = heatmap_matrix,
+  name = "Estimate",
+  col = col_fun,
+  
+  # Row settings - names on right
+  show_row_names = TRUE,
+  row_names_side = "right",  # Changed from "left" to "right"
+  row_names_gp = gpar(fontsize = 8, fontface = "bold"),
+  
+  # Column settings
+  show_column_names = TRUE,
+  column_names_rot = 0,
+  column_names_centered = TRUE,
+  column_names_gp = gpar(fontsize = 10),
+  
+  # Heatmap appearance
+  rect_gp = gpar(col = "gray", lwd = 0.5),
+  border = TRUE,
+  na_col = "lightgray",
+  
+  # Clustering
+  cluster_rows = TRUE,
+  cluster_columns = FALSE,
+  
+  # Legend settings
+  heatmap_legend_param = list(
+    title = "Estimate",
+    title_gp = gpar(fontsize = 10, fontface = "bold"),
+    labels_gp = gpar(fontsize = 7),
+    legend_height = unit(4, "cm"),
+    at = color_breaks,
+    labels = round(color_breaks, 2)
+  )
+)
+draw(ht, 
+     heatmap_legend_side = "right",
+     padding = unit(c(2, 2, 2, 10), "mm")) # Right padding increased to 10mm
+
+# Save as PNG
+png("top_proteins_heatmap.png", 
+    width = 2000,  # Pixel dimensions
+    height = 1500, 
+    res = 300)     # 300 DPI for high quality
+draw(ht, padding = unit(c(2, 2, 2, 10), "mm"))
+dev.off()
+```
+
+
+#Ultimate the for combined plots of heatmap and the bubble plot
+```{r}
+# --- LIBRARIES ---
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+library(stringr)
+
+# Ensure metabolite and archetype order are fixed and consistent
+metabolite_levels <- union(
+  unique(top10_metabolite$Metabolite),
+  unique(significant_results_metabolite_clinical$Metabolite)
+)
+archetype_levels <- unique(top10_metabolite$Archetype)
+
+# --- Tile data for heatmap ---
+tile_data <- top10_metabolite %>%
+  mutate(
+    Metabolite = factor(Metabolite, levels = rev(metabolite_levels)),
+    Archetype = factor(Archetype, levels = archetype_levels)
+  )
+
+# --- Significance stars column ---
+get_significance <- function(p) {
+  if (is.na(p)) return("")
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}
+tile_data$stars <- sapply(tile_data$Adjusted_P_value, get_significance)
+tile_data_full <- tidyr::complete(
+  tile_data,
+  Metabolite = metabolite_levels,
+  Archetype = archetype_levels,
+  fill = list(Estimate = NA, stars = "")
+)
+
+# --- Bubble plot data (make all metabolites present, fill missing with NA) ---
+
+significant_results_metabolite_clinical <- significant_results_metabolite_clinical %>%
+  mutate(Clinical = recode(Clinical,
+                                    "u3talteru" = "Age",
+                                    "u3csex" = "Gender",
+                                    "u3tgewi" = "Weight",
+                                    "u3tgroe" = "Height",
+                                    "u3tbmi" = "BMI",
+                                    "u3tbmiwho" = "WHO_BMI_Category",
+                                    "u3twhrat" = "WHR",
+                                    "u3twhratc" = "WHR_Category",
+                                    "u3tsysmm" = "SBP",
+                                    "u3tdiamm" = "DBP",
+                                    "u3twhoish" = "Hypertension",
+                                    "u3tglukfastn" = "Fasting_glucose",
+                                    "u3tgluk2n" = "Glucose_2h",
+                                    "u3tdm110y15" = "Diabetes_WHO",
+                                    "u3tinsfastn" = "Fasting_serum_insulin",
+                                    "u3tins2n" = "Insulin_2h",
+                                    "u3tmsidfup" = "Metabolic_Syndrome_IDF",
+                                    "u3thoma2_b" = "HOMA_Beta",
+                                    "u3thoma2_s" = "HOMA_Sensitivity",
+                                    "u3thoma2_ir" = "HOMA_IR",
+                                    "u3tquickin" = "Insulin_Sensitivity_Quicki",
+                                    "u3lk_choln" = "Cholesterol",
+                                    "u3lk_hdln" = "HDL",
+                                    "u3lk_ldln" = "LDL",
+                                    "u3lk_trin" = "TG",
+                                    "u3lk_krean" = "Creatinine",
+                                    "u3l_hbavn" = "HbA1c",
+                                    "u3h_crp" = "hsCRP"
+  ))
+# Make a full grid for bubble plot, so every Metabolite (in the agreed order) appears
+phenotype_levels <- unique(significant_results_metabolite_clinical$Clinical)
+bubble_data_full <- tidyr::complete(
+  significant_results_metabolite_clinical %>%
+    mutate(
+      neg_log10_p = -log10(P_value),  # or Adjusted_P_value
+      Metabolite = factor(Metabolite, levels = rev(metabolite_levels))
+    ),
+  Metabolite = metabolite_levels,
+  Clinical = phenotype_levels
+)
+col_fun <- colorRampPalette(c("darkblue", "dodgerblue", "#FFFDD0", "salmon", "darkred"))
+max_abs_value <- max(abs(tile_data$Estimate), na.rm = TRUE)
+color_breaks <- seq(-max_abs_value, max_abs_value, length.out = 5)
+
+p_heatmap <- ggplot(tile_data_full, aes(x = Archetype, y = Metabolite, fill = Estimate)) +
+  geom_tile(color = "gray", linewidth = 0.5) +
+  scale_fill_gradientn(
+    colours = col_fun(100),
+    limits = c(-max_abs_value, max_abs_value),
+    breaks = color_breaks,
+    labels = round(color_breaks, 2),
+    name = "Estimate",
+    na.value = "white"
+  ) +
+  geom_text(aes(label = stars), size = 8, fontface = "bold", na.rm = TRUE) +
+  scale_x_discrete(expand = c(0,0)) +
+  scale_y_discrete(expand = c(0,0)) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 0.5, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    legend.position = "right",
+    plot.margin = margin(0,0,0,0)
+  )
+p_heatmap
+p_bubble <- ggplot(bubble_data_full,
+                   aes(x = Clinical, y = Metabolite, size = neg_log10_p, color = Estimate)) +
+  geom_point() +
+  scale_color_gradient2(
+    low = "blue", mid = "white", high = "brown", midpoint = 0, name = "Effect Size"
+  ) +
+  scale_size_continuous(
+    name = "-log10",
+    range = c(3, 10)
+  ) +
+  labs(
+    title = NULL,
+    x = "Phenotypes", y = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.y = element_blank(),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    legend.position = "right",
+    panel.grid.major = element_line(color = "gray90"),
+    plot.title = element_text(size = 16, face = "bold"),
+    plot.margin = margin(0,0,0,0)
+  )
+p_bubble
+combined <- p_heatmap + p_bubble + 
+  plot_layout(nrow = 1, widths = c(0.32, 0.68))
+combined
+
+ggsave("bubble_plot_only.png", p_bubble, width = 12, height = length(metabolite_levels)*0.5 + 2, dpi = 600, bg = "white")
+
+
+ggsave("combined_ggplot_heatmap_bubble.ultimate.png", combined, width = 20, height = length(metabolite_levels)*0.5 + 2, dpi = 600, bg = "white")
+
+ggsave("bubble_plot_only.pdf", p_bubble, width = 12, height = length(metabolite_levels)*0.5 + 2, dpi = 600, bg = "white")
+
+ggsave(
+  "combined_ggplot_heatmap_bubble.ultimate.pdf",
+  plot = combined,
+  width = 18,
+  height = length(metabolite_levels) * 0.5 + 2,
+  bg = "white"
+)
+
+
+```
+```{r}
+# --- LIBRARIES ---
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+
+# ==============================
+# ==============================
+
+# If TRUE, non-significant heatmap cells become white
+mask_nonsig_heatmap <- FALSE
+
+# ==============================
+# ==============================
+
+# Use ONLY metabolites from the heatmap as the reference list
+metabolite_levels <- unique(top10_metabolite$Metabolite)
+archetype_levels  <- unique(top10_metabolite$Archetype)
+
+# ==============================
+# ==============================
+
+get_significance <- function(p) {
+  if (is.na(p)) return("")
+  if (p < 0.001) return("***")
+  if (p < 0.01)  return("**")
+  if (p < 0.05)  return("*")
+  return("")
+}
+
+tile_data <- top10_metabolite %>%
+  mutate(
+    stars = sapply(Adjusted_P_value, get_significance),
+    Metabolite = factor(Metabolite, levels = rev(metabolite_levels)),
+    Archetype  = factor(Archetype, levels = archetype_levels)
+  )
+
+# Optional: mask non-significant cells
+if (mask_nonsig_heatmap) {
+  tile_data <- tile_data %>%
+    mutate(Estimate = ifelse(stars == "", NA, Estimate))
+}
+
+# Complete heatmap grid
+tile_data_full <- tile_data %>%
+  complete(
+    Metabolite = factor(rev(metabolite_levels), levels = rev(metabolite_levels)),
+    Archetype  = factor(archetype_levels, levels = archetype_levels),
+    fill = list(Estimate = NA, stars = "")
+  )
+
+# Recalculate color scale from CURRENT data
+max_abs_value <- max(abs(tile_data_full$Estimate), na.rm = TRUE)
+color_breaks  <- seq(-max_abs_value, max_abs_value, length.out = 5)
+
+col_fun <- colorRampPalette(c("darkblue", "dodgerblue", "#FFFDD0", "salmon", "darkred"))
+
+# ==============================
+# ==============================
+
+bubble_data <- significant_results_metabolite_clinical %>%
+  mutate(
+    Clinical = recode(
+      Clinical,
+      "u3talteru"     = "Age",
+      "u3csex"        = "Gender",
+      "u3tgewi"       = "Weight",
+      "u3tgroe"       = "Height",
+      "u3tbmi"        = "BMI",
+      "u3tbmiwho"     = "WHO_BMI_Category",
+      "u3twhrat"      = "WHR",
+      "u3twhratc"     = "WHR_Category",
+      "u3tsysmm"      = "SBP",
+      "u3tdiamm"      = "DBP",
+      "u3twhoish"     = "Hypertension",
+      "u3tglukfastn"  = "Fasting_glucose",
+      "u3tgluk2n"     = "Glucose_2h",
+      "u3tdm110y15"   = "Diabetes_WHO",
+      "u3tinsfastn"   = "Fasting_serum_insulin",
+      "u3tins2n"      = "Insulin_2h",
+      "u3tmsidfup"    = "Metabolic_Syndrome_IDF",
+      "u3thoma2_b"    = "HOMA_Beta",
+      "u3thoma2_s"    = "HOMA_Sensitivity",
+      "u3thoma2_ir"   = "HOMA_IR",
+      "u3tquickin"    = "Insulin_Sensitivity_Quicki",
+      "u3lk_choln"    = "Cholesterol",
+      "u3lk_hdln"     = "HDL",
+      "u3lk_ldln"     = "LDL",
+      "u3lk_trin"     = "TG",
+      "u3lk_krean"    = "Creatinine",
+      "u3l_hbavn"     = "HbA1c",
+      "u3h_crp"       = "hsCRP"
+    ),
+    neg_log10_p = -log10(Adjusted_P_value)
+    # If you prefer raw p-values instead, replace with:
+  ) %>%
+  # Keep ONLY metabolites that are in the heatmap
+  filter(Metabolite %in% metabolite_levels) %>%
+  # Optional: remove categorical/binary phenotypes if you do not want them
+  filter(!Clinical %in% c(
+    "Gender",
+    "WHO_BMI_Category",
+    "WHR_Category",
+    "Hypertension",
+    "Diabetes_WHO",
+    "Metabolic_Syndrome_IDF"
+  )) %>%
+  mutate(
+    Metabolite = factor(Metabolite, levels = rev(metabolite_levels))
+  )
+
+# Keep phenotype order as it appears after filtering
+phenotype_levels <- unique(bubble_data$Clinical)
+
+# Complete bubble grid so rows align with heatmap
+bubble_data_full <- bubble_data %>%
+  complete(
+    Metabolite = factor(rev(metabolite_levels), levels = rev(metabolite_levels)),
+    Clinical   = phenotype_levels
+  )
+
+# ==============================
+# ==============================
+
+p_heatmap <- ggplot(tile_data_full, aes(x = Archetype, y = Metabolite, fill = Estimate)) +
+  geom_tile(color = "gray", linewidth = 0.5) +
+  geom_text(aes(label = stars), size = 8, fontface = "bold", na.rm = TRUE) +
+  scale_fill_gradientn(
+    colours = col_fun(100),
+    limits = c(-max_abs_value, max_abs_value),
+    breaks = color_breaks,
+    labels = round(color_breaks, 2),
+    name = "Estimate",
+    na.value = "white"
+  ) +
+  scale_x_discrete(expand = c(0, 0)) +
+  scale_y_discrete(expand = c(0, 0)) +
+  coord_cartesian(clip = "off") +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 0.5, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    panel.border = element_rect(color = "black", fill = NA, linewidth = 0.8),
+    legend.position = "right",
+    plot.margin = margin(0, 0, 0, 0)
+  )
+
+print(p_heatmap)
+
+# ==============================
+# ==============================
+
+p_bubble <- ggplot(
+  bubble_data_full,
+  aes(x = Clinical, y = Metabolite, size = neg_log10_p, color = Estimate)
+) +
+  geom_point(na.rm = TRUE) +
+  scale_color_gradient2(
+    low = "blue",
+    mid = "white",
+    high = "brown",
+    midpoint = 0,
+    name = "Effect Size",
+    na.value = "white"
+  ) +
+  scale_size_continuous(
+    name = "-log10(P)",
+    range = c(3, 10)
+  ) +
+  labs(
+    x = "Phenotypes",
+    y = NULL
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 14, face = "bold"),
+    axis.text.y = element_text(size = 14, face = "bold"),
+    axis.title.y = element_blank(),
+    axis.title.x = element_text(size = 14, face = "bold"),
+    legend.position = "right",
+    panel.grid.major = element_line(color = "gray90"),
+    plot.margin = margin(0, 0, 0, 0)
+  )
+
+print(p_bubble)
+
+# ==============================
+# ==============================
+
+combined <- p_heatmap + p_bubble +
+  plot_layout(nrow = 1, widths = c(0.32, 0.68))
+
+print(combined)
+
+# ==============================
+# ==============================
+
+ggsave(
+  "bubble_plot_only_metabolomics.png",
+  p_bubble,
+  width = 12,
+  height = length(metabolite_levels) * 0.5 + 2,
+  dpi = 600,
+  bg = "white"
+)
+
+ggsave(
+  "combined_ggplot_heatmap_bubble_metabolomics.png",
+  combined,
+  width = 20,
+  height = length(metabolite_levels) * 0.5 + 2,
+  dpi = 600,
+  bg = "white"
+)
+
+ggsave(
+  "bubble_plot_only_metabolomics.pdf",
+  p_bubble,
+  width = 12,
+  height = length(metabolite_levels) * 0.5 + 2,
+  bg = "white"
+)
+
+ggsave(
+  "combined_ggplot_heatmap_bubble_metabolomics.pdf",
+  combined,
+  width = 18,
+  height = length(metabolite_levels) * 0.5 + 2,
+  bg = "white"
+)
+
+getwd()
+```
+
+
+
+```{r}
+library(clusterProfiler)
+# Convert metabolite IDs to pathways
+enrich_results <- enrichKEGG(
+  gene = significant_results$Metabolite,
+  organism = "hsa"
+)
+dotplot(enrich_results)
+```
+
+
+
+
+
+```{r}
+sessionInfo()
+```
+

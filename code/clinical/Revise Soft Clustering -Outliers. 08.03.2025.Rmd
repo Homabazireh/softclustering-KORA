@@ -1,0 +1,4431 @@
+---
+title: "Revise Soft Clustering Outliers"
+author: "Homa Bazireh"
+date: "2025-03-08"
+output: html_document
+---
+#To do list 
+##Sankey diagram
+##Violin plot 
+```{r}
+```
+
+
+```{r}
+library(tidyverse)
+library(Seurat)
+library(SingleR)
+library(SingleCellExperiment)
+library(ggplot2)
+library(patchwork)
+library(hdf5r)
+library(scDblFinder)
+library(Matrix)
+library(org.Mm.eg.db)
+library(clusterProfiler)
+library(enrichplot)
+library(ggtree)
+library(harmony)
+library(DESeq2)
+library(pacman)
+library(EnhancedVolcano)
+library(slingshot) 
+library(presto)
+
+```
+
+
+But for R Markdown, a better and safer option is to use the `root.dir` option:
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  root.dir = Sys.getenv("KORA_RUN_DIR")
+)
+
+```
+
+
+
+
+
+# recording the package versionsusing renv
+```{r}
+install.packages("renv")
+# Only initialize once when setting up the project
+renv::init()
+```
+
+
+## R Markdown
+#Installing packages 
+```{r}
+install.packages("nnls")
+install.packages("archetypes")
+install.packages("modeltools")
+install.packages("ggsci")
+install.packages("ggalluvial")
+install.packages("ggpubr")
+install.packages("archetypal", dependencies = TRUE)
+install.packages("clusterCrit", dependencies = TRUE)
+install.packages("kohonen")
+install.packages("kableExtra")
+install.packages("fclust")
+install.packages("zip")
+install.packages(c("knitr", "magrittr", "stringr", "xml2", "rmarkdown", "scales", "viridisLite", "htmltools", "rstudioapi", "svglite"))
+install.packages("fpc")
+install.packages("clusterSim")
+install.packages("dbscan")
+install.packages("ggfortify")
+if (!requireNamespace("broom", quietly = TRUE)) {
+  install.packages("broom")
+}
+# modeling set, which includes broom:
+install.packages("tidymodels")
+
+# alternatively, to install just broom:
+install.packages("broom")
+
+# to get the development version from GitHub:
+install.packages("pak")
+
+pak::pak("tidymodels/broom")
+```
+
+## After installing new packages, update renv.lock
+
+```{r}
+renv::snapshot()
+```
+
+#Reinstalls the exact package versions from the renv.lock file
+```{r}
+renv::restore()
+```
+
+#Retrievininng the libraries
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+library(glmnet)
+library("nestedcv")
+library("glmnet")
+library("modeltools")
+library("archetypes")
+library("stats4")
+library("nnls")
+library("vcd")
+library(archetypes)
+library(factoextra)
+library(FactoMineR)
+library(scatterplot3d)
+library(plotly)
+library(ggplot2)
+library(ggsci)
+library(CBCgrps)
+library(pheatmap)
+library(corrplot)
+library(ggsankey)
+library(ggplot2)
+library(dplyr)
+library(ggalluvial)
+library(ggpubr)
+library(tidyr)
+library(dplyr)
+library(broom)
+library(naniar)
+library(mice)
+library(Amelia)
+library(glmnet)
+library(archetypal)
+library(corrplot)
+library(stats)
+library(rgl)  # For interactive 3D visualization
+library(fossil) #for ARI 
+library(clusterCrit)
+library(knitr)
+library(kableExtra)
+library(kohonen)
+library(fclust)
+library(fpc)
+library(dbscan)
+library(clusterSim)
+library(gridExtra)
+library(viridis)
+library(zip)
+library(ggfortify)
+library(orca)
+library(webshot)
+
+```
+
+
+#Variable directory
+
+##Gender
+##Age at examination
+##Weight
+##Height
+##Waist-Hip-Ratio (WHR) (m/m) or (cm/cm)
+##high sensitivity C-reactive protein (hsCRP)
+##Systolic blood pressure (mmHg)
+##Diastolic blood pressure (mmHg)
+##Gender
+##Fasting Cholesterol (mmol/L)
+##Fasting creatinine (umol/L) serum
+##Mean insulin (pmol/L)
+##Mean Glucose (nmol/L)
+##Metabolic syndrome status based on different classifications
+##Fasting serum insulin (pmol/l)
+##Fasting glucose (mmol/L)
+##Hypertension status of different classifications
+##Insulin Resistance (HOMA_IR) 
+##Beta_cell function (HOMA_B) 
+##Insulin Sensitivity (HOMA_S)
+##Diabetes status based on various classification
+##Fasting LDL-C (mmol/L)
+##Fasting HDL-C (mmol/L)
+##Fasting triglycerides TG (mmol/L)
+
+
+#Setting the working directory 
+```{r}
+rm(list = ls(all.names = TRUE))
+
+
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+#Set working directory
+setwd(Sys.getenv("KORA_RUN_DIR"))
+list.files()
+
+
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+#For saving figures
+#setwd(Sys.getenv("KORA_RUN_DIR"))
+getw
+```
+Users/HomaBazireh/OneDrive - Helmholtz Zentrum München/Papers/Soft Clustering Project/Soft clustering of KORA-FF4.Homa/Data Provided by KORA"
+
+# Reading the csv file
+```{r}
+#for my computer
+Data <- read.csv("clinical.csv", dec = ".", sep = ";")
+
+Data <- read.csv(file = "clinical.csv", dec = ".", sep = ";")
+dim(Data)
+
+```
+
+
+#Subsetting the desired data
+```{r}
+Data.soft <- Data[, c(12:17, 20, 21, 24:26, 38, 40, 42, 50,52,57,64,65,66,67, 71:74, 78, 81, 82)]
+dim(Data.soft)
+```
+
+
+#Removing missing values
+```{r}
+#Removing the misising values
+
+Data.soft <- Data.soft[!is.na(Data.soft$u3csex),] #2279-2279 = 0
+Data.soft <- Data.soft[!is.na(Data.soft$u3lk_hdln),] #2279 - 2270 = 9
+Data.soft <- Data.soft[!is.na(Data.soft$u3lk_ldln),] #2279 - 2270 = 9
+Data.soft <- Data.soft[!is.na(Data.soft$u3talteru),] #2279 - 2277 = 2
+Data.soft <- Data.soft[!is.na(Data.soft$u3tgroe),] #2279 - 2275 = 4
+Data.soft <- Data.soft[!is.na(Data.soft$u3lk_trin),] #2279 - 2270 = 9
+Data.soft <- Data.soft[!is.na(Data.soft$u3tgewi),] #2279 - 2275 = 4
+Data.soft <- Data.soft[!is.na(Data.soft$u3tbmi),] #2279 - 2275 = 4
+Data.soft <- Data.soft[!is.na(Data.soft$u3tbmiwho),] #2279 - 2275 = 4
+Data.soft <- Data.soft[!is.na(Data.soft$u3twhrat),] # 2279 - 2273 = 6
+Data.soft <- Data.soft[!is.na(Data.soft$u3twhratc),] #2279 - 2273 = 6
+Data.soft <- Data.soft[!is.na(Data.soft$u3l_hbavn),] #2279-2263 = 16
+Data.soft <- Data.soft[!is.na(Data.soft$u3lk_choln),] #2279 - 2270 = 9
+Data.soft <- Data.soft[!is.na(Data.soft$u3lk_krean),] #2279 - 2270 = 9
+Data.soft <- Data.soft[!is.na(Data.soft$u3tins2n),]#2279-1944 = 335
+Data.soft <- Data.soft[!is.na(Data.soft$u3tinsfastn),] #2279 -2239 = 40 
+Data.soft <- Data.soft[!is.na(Data.soft$u3h_crp),] #2279 - 2258 = 21
+Data.soft <- Data.soft[!is.na(Data.soft$u3tsysmm),] #2279 - 2275  = 4
+Data.soft <- Data.soft[!is.na(Data.soft$u3tdiamm),]#2279 - 2275 = 4
+Data.soft <- Data.soft[!is.na(Data.soft$u3tquickin),]#2279 -2230 = 49
+Data.soft <- Data.soft[!is.na(Data.soft$u3tgluk2n),]#2279 -1948 = 331
+Data.soft <- Data.soft[!is.na(Data.soft$u3tglukfastn),] #2279 - 2240 = 39
+Data.soft <- Data.soft[!is.na(Data.soft$u3thoma2_ir),] #2279 - 2230 = 49
+Data.soft <- Data.soft[!is.na(Data.soft$u3thoma2_b),] #2279 - 2230 = 49
+Data.soft <- Data.soft[!is.na(Data.soft$u3thoma2_s),] #2279 - 2230 = 49
+#Hypertension exclusion
+Data.soft <- Data.soft[!is.na(Data.soft$u3twhoish),]#2279 -2275 = 4 
+
+#Diabetes exclusion 
+Data.soft <- Data.soft[!is.na(Data.soft$u3tdm110y15),] #2279 -2277 = 2
+
+#Metabolic syndrome exclusion
+Data.soft <- Data.soft[!is.na(Data.soft$u3tmsidfup),] #IDF 2009 # 2279-2255 = 24
+
+dim(Data.soft)
+```
+
+#Defining the Unnormalised Data
+```{r}
+Unnormalised.Data = Data.soft
+save(Unnormalised.Data,file="Unnormalised.Data.RData")
+load("Unnormalised.Data.RData")
+```
+
+
+##Optional 
+
+```{r}
+#Optional not included in the analysis based on the other definitions
+Data.soft <- Data.soft[!is.na(Data.soft$u3tmsncep),] #NCEP-ATP III 2001 # 2279-2256 = 23
+Data.soft <- Data.soft[!is.na(Data.soft$u3tmsncepup),] #NCEP-ATP III 2005 #2279 - 2255 = 24
+```
+
+#Renaming the coloums 
+```{r}
+# Rename columns using dplyr
+Data.soft <- Data.soft %>%
+  dplyr::rename(
+    Age = u3talteru, 
+    Gender = u3csex, 
+    Weight = u3tgewi, 
+    Height = u3tgroe, 
+    BMI = u3tbmi,
+    WHO_BMI_Category = u3tbmiwho,  
+    WHR = u3twhrat,  
+    WHR_Category = u3twhratc, 
+    SBP = u3tsysmm, 
+    DBP = u3tdiamm, 
+    Hypertension = u3twhoish,  
+    Fasting_glucose = u3tglukfastn,  
+    Glucose_2h = u3tgluk2n,  
+    Diabetes_WHO = u3tdm110y15,  
+    Fasting_serum_insulin = u3tinsfastn,  
+    Insulin_2h = u3tins2n,  
+    Metabolic_Syndrome_IDF = u3tmsidfup,  
+    HOMA_Beta = u3thoma2_b,  
+    HOMA_Sensitivity = u3thoma2_s,  
+    HOMA_IR = u3thoma2_ir,  
+    Insulin_Sensitivity_Quicki = u3tquickin,
+    Cholesterol = u3lk_choln,  
+    HDL = u3lk_hdln, 
+    LDL = u3lk_ldln,  
+    TG = u3lk_trin, 
+    Creatinine = u3lk_krean, 
+    HbA1c = u3l_hbavn,   
+    hsCRP = u3h_crp
+  )
+```
+
+```{r}
+# Load required library
+library(dplyr)
+library(pheatmap)
+
+# Specify variables to exclude
+exclude_vars <- c("Age", "Gender", "Metabolic_Syndrome_IDF", "WHO_BMI_Category", "WHR_Category", "Diabetes_WHO", "Hypertension")
+
+# Rename columns using dplyr
+Data.soft <- Data.soft %>%
+  dplyr::rename(
+    Age = u3talteru, 
+    Gender = u3csex, 
+    Weight = u3tgewi, 
+    Height = u3tgroe, 
+    BMI = u3tbmi,
+    WHO_BMI_Category = u3tbmiwho,  
+    WHR = u3twhrat,  
+    WHR_Category = u3twhratc, 
+    SBP = u3tsysmm, 
+    DBP = u3tdiamm, 
+    Hypertension = u3twhoish,  
+    Fasting_glucose = u3tglukfastn,  
+    Glucose_2h = u3tgluk2n,  
+    Diabetes_WHO = u3tdm110y15,  
+    Fasting_serum_insulin = u3tinsfastn,  
+    Insulin_2h = u3tins2n,  
+    Metabolic_Syndrome_IDF = u3tmsidfup,  
+    HOMA_Beta = u3thoma2_b,  
+    HOMA_Sensitivity = u3thoma2_s,  
+    HOMA_IR = u3thoma2_ir,  
+    Insulin_Sensitivity_Quicki = u3tquickin,
+    Cholesterol = u3lk_choln,  
+    HDL = u3lk_hdln, 
+    LDL = u3lk_ldln,  
+    TG = u3lk_trin, 
+    Creatinine = u3lk_krean, 
+    HbA1c = u3l_hbavn,   
+    hsCRP = u3h_crp
+  )
+
+# Get the variable names to use (exclude the specified variables)
+all_vars <- colnames(Data.soft)
+vars_to_use <- setdiff(all_vars, exclude_vars)
+
+# Keep only numeric columns
+numeric_vars <- vars_to_use[sapply(Data.soft[, vars_to_use], is.numeric)]
+Data.analysis <- Data.soft[, numeric_vars]
+
+
+# Initialize matrices
+n_vars <- length(vars_to_use)
+mw_p_values <- matrix(NA, nrow = n_vars, ncol = ncol(adjusted_assignments))
+median_diff_matrix <- matrix(NA, nrow = n_vars, ncol = ncol(adjusted_assignments))
+
+# Perform Mann-Whitney U test and calculate median difference (as effect direction)
+for (i in 1:n_vars) {
+  for (j in 1:ncol(adjusted_assignments)) {
+    group1 <- Data.analysis[adjusted_assignments[, j] == 1, i]
+    group2 <- Data.analysis[adjusted_assignments[, j] == 0, i]
+
+    if (length(group1) > 2 && length(group2) > 2) {
+      test_result <- wilcox.test(group1, group2, exact = FALSE)
+      mw_p_values[i, j] <- test_result$p.value
+      # Use median difference as direction
+      median_diff_matrix[i, j] <- median(group1, na.rm = TRUE) - median(group2, na.rm = TRUE)
+    }
+  }
+}
+
+# Adjust p-values for multiple comparisons (FDR)
+p_values_adjusted <- matrix(p.adjust(mw_p_values, method = "fdr"), 
+                            nrow = nrow(mw_p_values), 
+                            ncol = ncol(mw_p_values))
+
+# Convert adjusted p-values to significance stars
+significance_matrix <- matrix(sapply(p_values_adjusted, function(p) {
+  if (is.na(p)) return("")
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}), nrow = nrow(mw_p_values), ncol = ncol(mw_p_values))
+
+# Assign row and column names
+rownames(median_diff_matrix) <- rownames(significance_matrix) <- vars_to_use
+colnames(median_diff_matrix) <- colnames(significance_matrix) <- colnames(adjusted_assignments)
+
+# Scale for heatmap visualization
+scaled_medians <- scale(median_diff_matrix)
+
+# Define heatmap color palette
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+# Save heatmap
+jpeg("Heatmap_MedianDiff_Archetypes.jpeg", width = 1800, height = 1000, res = 300)
+
+pheatmap(scaled_medians, 
+         cluster_rows = TRUE,
+         cluster_cols = FALSE,
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         color = my_palette,
+         main = "Heatmap of Archetypes",
+         fontsize_row = 6,
+         fontsize_col = 8,
+         angle_col = "0",
+         border_color = "grey70",
+         display_numbers = significance_matrix)
+
+dev.off()
+```
+
+
+##Missing values visualisation
+```{r}
+
+missing <- missmap(Data.soft, main = "Missing values vs observed")
+vis_miss(Data.soft)
+gg_miss_upset(Data.soft)
+md.pattern(Data.soft)
+
+png("missmap_plot.png", width = 800, height = 600)
+missmap(Data.soft, main = "Missing values vs observed")
+dev.off()
+
+p <- vis_miss(Data.soft) +
+  theme_minimal() +  # Ensures a white background
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, size = 10),  # Rotate and enlarge text
+    plot.margin = margin(10, 80, 10, 10, "pt"),  # Increase right margin
+    panel.background = element_rect(fill = "white", color = NA),  # White panel background
+    plot.background = element_rect(fill = "white", color = NA)  # White plot background
+  )
+ggsave("vis_miss_adjusted.png", p, width = 10, height = 6, dpi = 300)
+
+print(p)
+dev.off()
+
+png("gg_miss_upset.png", width = 1200, height = 800, res = 150)
+
+# Generate and print the UpSet plot
+print(gg_miss_upset(Data.soft))  # Use print() to ensure it renders inside png()
+
+# Close the graphics device
+dev.off()
+
+# Save md.pattern plot
+png("md_pattern_plot.png", width = 800, height = 600)
+print(md.pattern(Data.soft))  # Explicitly print the function to ensure it renders
+dev.off()
+
+```
+
+
+#viusalisation of number of the particpants based on the IDF definition 
+```{r}
+table(Data.soft$u3tmsidfup)
+bar_positions <- barplot(table(Data.soft$u3tmsidfup),
+                         main = "Barplot of IDF Metabolic Syndrome",
+                         ylim = c(0,1800),
+                         col = c("red", "lightblue"),
+                         las = 1,
+                         names.arg = c("Metabolic Syndrome", "Controls"))
+
+
+
+###To save the results
+
+# Get the counts for each category
+counts <- table(Data.soft$u3tmsidfup)
+
+# Create the bar plot
+bar_positions <- barplot(counts,
+                         main = "Barplot of Metabolic Syndrome based on the IDF definition",
+                         ylim = c(0, max(counts) * 1.1),  # Extend y-axis for labels
+                         col = c("red", "lightblue"),
+                         las = 1,
+                         names.arg = c("Metabolic Syndrome", "Controls"))
+
+# Add the text labels (number of participants) above each bar
+text(x = bar_positions, y = counts, label = counts, pos = 3, cex = 1.2)
+dev.copy(png, filename = "barplot_IDF_Metabolic_Syndrome.png", width = 7, height = 5, units = "in", res = 600)
+
+# Close the graphics device
+dev.off()
+
+
+
+```
+```{r}
+# Subset relevant columns from the original dataset
+Data.soft <- Data[, c(12:17, 20, 21, 24:26, 38, 40, 42, 50, 52, 55, 56, 57, 64, 65, 66, 67, 71:74, 78, 81, 82)]
+
+# Remove rows with any missing values
+Data.soft <- na.omit(Data.soft)
+par(mfrow = c(1, 3))  # FIXED: Use `mfrow` instead of `nrow`
+counts <- table(Data.soft$u3tmsncep)
+bar_positions <- barplot(counts,
+                         main = "Metabolic Syndrome (NCEP 2001)",
+                         ylim = c(0, max(counts) * 1.1),
+                         col = c("red", "lightblue"),
+                         las = 1,
+                         names.arg = c("MetS", "Controls"))
+text(x = bar_positions, y = counts, label = counts, pos = 3, cex = 1.2)
+counts <- table(Data.soft$u3tmsncepup)
+bar_positions <- barplot(counts,
+                         main = "Metabolic Syndrome (NCEP 2005)",
+                         ylim = c(0, max(counts) * 1.1),
+                         col = c("red", "lightblue"),
+                         las = 1,
+                         names.arg = c("MetS", "Controls"))
+text(x = bar_positions, y = counts, label = counts, pos = 3, cex = 1.2)
+
+# -------- Barplot for IDF --------
+counts <- table(Data.soft$u3tmsidfup)
+bar_positions <- barplot(counts,
+                         main = "Metabolic Syndrome (IDF)",
+                         ylim = c(0, max(counts) * 1.1),
+                         col = c("red", "lightblue"),
+                         las = 1,
+                         names.arg = c("MetS", "Controls"))
+text(x = bar_positions, y = counts, label = counts, pos = 3, cex = 1.2)
+dev.copy(png, filename = "barplot_Metabolic_Syndrome.png", width = 7, height = 5, units = "in", res = 600)
+dev.off()
+
+```
+
+
+
+#Normalisation 
+
+## inverse-normal transformation of variables(Transforming data into normal data)
+### First the categorical variabels should be excluded and the transformation should only be done on the numerical data
+### Exclude specific columns and select only numeric columns
+
+```{r}
+Data.soft_subset <- Data.soft[, -c(2, 6, 8, 11, 14, 17)]
+numeric_cols <- names(Data.soft_subset)[sapply(Data.soft_subset, is.numeric)]  # Get names of numeric columns
+
+#### Apply the transformation to each numeric column in the original Data.soft and then viewing the data 
+
+Data.soft[numeric_cols] <- lapply(Data.soft[numeric_cols], function(col) { 
+  qnorm((rank(col, na.last = "keep") - 0.5) / sum(!is.na(col)))
+})
+```
+
+
+#Visualisation of Normalised data 
+###histgram of only numerical variables 
+```{r}
+hist(data.matrix(Data.soft[,-c(2, 6, 8, 11, 14, 17)]))
+
+##Shapiro test for checking the normality 
+
+# Load required libraries
+library(ggplot2)
+
+# Perform Shapiro-Wilk test for normality
+shapiro_results <- data.frame(Variable = names(Data.soft)[1:28], p.value = NA)
+
+for (i in 1:28) {
+  variable <- Data.soft[, i]
+  shapiro_results$p.value[i] <- shapiro.test(variable)$p.value
+}
+
+# Display Shapiro-Wilk test results
+print(shapiro_results)
+
+# Visual inspection using histograms and Q-Q plots
+for (i in 1:28) {
+  variable <- Data.soft[, i]
+  
+  # Histogram
+  p <- ggplot(data = Data.soft, aes(x = !!sym(names(Data.soft)[i]))) +
+    geom_histogram(binwidth = 0.5) +
+    ggtitle(paste("Histogram of", names(Data.soft)[i])) +
+    theme_minimal()
+  ggsave(paste0("histogram_", names(Data.soft)[i], ".png"), plot = p)
+  
+  # Q-Q plot
+  png(paste0("qqplot_", names(Data.soft)[i], ".png"))
+  qqnorm(variable, main = paste("Q-Q Plot of", names(Data.soft)[i]))
+  qqline(variable, col = "red")
+  dev.off()
+}
+
+```
+
+
+##Saving the Normalsed file 
+```{r}
+save(Data.soft,file="DataClean.RData")
+save(Data.soft, file = "Data.soft.RData")
+```
+
+
+#Loading the Data.soft 
+
+```{r}
+load("Data.soft.RData")
+
+load("Data.soft.RData")
+```
+
+
+#Dealing with categorical variables 
+```{r}
+# Select categorical variables
+categorical_cols <- c("u3twhratc", "u3twhoish", "u3tdm110y15", "u3tmsidfup", "u3csex", "u3tbmiwho")
+
+
+# Convert categorical columns to factors
+Data.soft$u3twhratc <- as.factor(Data.soft$u3twhratc)
+Data.soft$u3twhoish <- as.factor(Data.soft$u3twhoish)
+Data.soft$u3tdm110y15 <- as.factor(Data.soft$u3tdm110y15)
+Data.soft$u3tmsidfup <- as.factor(Data.soft$u3tmsidfup)
+Data.soft$u3csex <- as.factor(Data.soft$u3csex)
+Data.soft$u3tbmiwho <- as.factor(Data.soft$u3tbmiwho)
+
+
+# Apply one-hot encoding
+Data.soft_encoded <- cbind(
+  Data.soft[numeric_cols],  # Keep the numeric columns as they are
+  model.matrix(~ u3twhratc - 1, data = Data.soft),  # One-hot encode 'u3twhratc'
+  model.matrix(~ u3twhoish - 1, data = Data.soft),  # One-hot encode 'u3twhoish'
+  model.matrix(~ u3tdm110y15 - 1, data = Data.soft),  # One-hot encode 'u3tdm110y15'
+  model.matrix(~ u3tmsidfup - 1, data = Data.soft),  # One-hot encode 'u3tmsidfup'
+  model.matrix(~ u3csex - 1, data = Data.soft),  # One-hot encode 'u3csex'
+  model.matrix(~ u3tbmiwho - 1, data = Data.soft)  # One-hot encode 'u3tbmiwho'
+)
+
+# Now, Data.soft_encoded contains the combined numeric and one-hot encoded categorical variables
+
+save(Data.soft_encoded , file = "Data.soft_encoded.RData")
+```
+
+#Load the NOramlised data for later 
+```{r}
+load("DataClean.RData")
+```
+
+#Descriptive statistics for cartegorical and countinous (not included in the analysis)
+```{r}
+
+#CBCgrps package
+# Define categorical columns
+categorical_cols <- c("u3twhratc", "u3twhoish", "u3tdm110y15", "u3tmsidfup", "u3csex", "u3tbmiwho")
+
+# Convert selected columns to factor type
+Data.soft <- Data.soft %>%
+  mutate(across(all_of(categorical_cols), as.factor))
+
+# Double-check: Ensure grouping variable is also a factor (optional if included above)
+Data.soft$u3tmsidfup <- as.factor(Data.soft$u3tmsidfup)
+
+# Use CBCgrps::twogrps to compare variables by group
+Baseline_Characteristics_categorical <- twogrps(Data.soft,
+  gvar = "u3tmsidfup",      # Grouping variable (e.g., IDF definition)
+  varlist = categorical_cols,  # Variables to summarize
+  p.rd = 3,
+  skewvar = NULL,
+  norm.rd = 2,
+  sk.rd = 2,
+  tabNA = "no",
+  cat.rd = 0,
+  pnormtest = 0.0001,
+  maxfactorlevels = 30,
+  minfactorlevels = 10,
+  sim = TRUE,
+  workspace = 2e+05,
+  ShowStatistic = FALSE,
+  ExtractP = 0.05
+)
+
+print(Baseline_Characteristics_categorical)
+View(Baseline_Characteristics_categorical)
+
+
+continous_cols <- c("u3talteru","u3tgewi", "u3tgroe", "u3tbmi","u3twhrat",
+                    "u3twhratc", "u3tsysmm", "u3tglukfastn", "u3tgluk2n", "u3tinsfastn",
+                    "u3tins2n", "u3tquickin", "u3lk_choln", "u3lk_hdln", "u3lk_ldln","u3lk_trin",
+                    "u3lk_krean", "u3l_hbavn", "u3h_crp", "u3thoma2_ir","u3thoma2_s", "u3thoma2_b")
+
+
+
+
+# Create a variable for baseline characteristics and specify grouping variables
+Baseline_Characteristics_continous <- twogrps(Data.soft,gvar = "u3tmsidfup",  # Grouping variable
+  varlist = continous_cols,
+  p.rd = 3,  # Number of decimal places for p-values
+  skewvar = NULL,  # Specify the Non-normal variable
+  norm.rd = 2,  # Rounding for normal variables
+  sk.rd = 2,  # Rounding for skewed variables
+  tabNA = "no",  # Exclude missing data (NA)
+  cat.rd = 0,  # Rounding for categorical variables
+  pnormtest = 0.0001,  # P-value threshold for normality test
+  maxfactorlevels = 30,  # Maximum levels for factors
+  minfactorlevels = 10,  # Minimum levels for factors
+  sim = TRUE,  # Enable simulation for statistical test
+  workspace = 2e+05,  # Workspace size for statistical tests
+  ShowStatistic = FALSE,  # Hide test statistics
+  ExtractP = 0.05  # Extract significant results (p < 0.05)
+)
+
+print(Baseline_Characteristics_continous)
+View(Baseline_Characteristics_continous)
+
+```
+
+
+#Baseline characteristics of the whole population (This one was done for the whole poulation in unnormalised data)
+```{r}
+# Create a variable for baseline characteristics and specify grouping variables
+Baseline_Characteristics <- twogrps(
+  Unnormalised.Data,"u3tmsidfup",  # Grouping variable
+  varlist = c("u3talteru", "u3csex", "u3tgewi", "u3tgroe", "u3tbmi", 
+              "u3tbmiwho", "u3twhrat", "u3twhratc", "u3tsysmm", 
+              "u3tdiamm", "u3twhoish", "u3tglukfastn", "u3tgluk2n", 
+              "u3tdm110y15", "u3tinsfastn", "u3tins2n", "u3tmsidfup", 
+              "u3tquickin", "u3lk_choln", "u3lk_hdln", "u3lk_ldln", 
+              "u3lk_trin", "u3lk_krean", "u3l_hbavn", "u3h_crp", "u3thoma2_ir",
+              "u3thoma2_s", "u3thoma2_b"),
+  p.rd = 3,  # Number of decimal places for p-values
+  skewvar = NULL ,#Specify the Non normal variable lists 
+  norm.rd = 2,  # Number of decimal places for normal variables
+  sk.rd = 2,  # Number of decimal places for skewed variables
+  tabNA = "no",  # Exclude missing data (NA)
+  cat.rd = 0,  # Rounding for categorical variables
+  pnormtest = 0.05,  # P-value threshold for normality test
+  maxfactorlevels = 30,  # Maximum levels for factors
+  minfactorlevels = 10,  # Minimum levels for factors
+  sim = TRUE,  # Simulation for statistical test
+  workspace = 2e+05,  # Workspace size for statistical tests
+  ShowStatistic = FALSE,  # Do not show test statistics
+  ExtractP = 0.05  # Extract results for variables with p-values below this threshold
+)
+
+# Display the baseline characteristics table
+print(Baseline_Characteristics)
+View(Baseline_Characteristics)
+```
+
+#PCA on the whole dataset based on the Metabolic syndrome status
+```{r}
+
+Data.soft$MetabolicSyndrome <- factor(Data.soft$u3tmsidfup, levels = c(1, 2), labels = c("Yes", "No"))
+
+# Perform PCA on TRANSFORMED data - CHANGED TO USE Data.soft instead of subset
+Data.soft_pca <- prcomp(Data.soft[numeric_cols], center = TRUE, scale. = TRUE)
+
+# Create PCA data frame - FIXED REFERENCE
+pca_df <- as.data.frame(Data.soft_pca$x)
+pca_df$MetabolicSyndrome <- Data.soft$MetabolicSyndrome
+
+# Plot PCA - FIXED SUMMARY REFERENCE
+ggplot(pca_df, aes(x = PC1, y = PC2, color = MetabolicSyndrome)) +
+  geom_point(size = 3, alpha = 0.7) +
+  theme_minimal() +
+  labs(title = "Principal Component Analysis of KORA FF4 Dataset Stratified by Metabolic Syndrome Status",
+       x = paste0("PC1 (", round(summary(Data.soft_pca)$importance[2, 1] * 100, 1), "%)"),
+       y = paste0("PC2 (", round(summary(Data.soft_pca)$importance[2, 2] * 100, 1), "%"),
+       color = "Metabolic Syndrome") + # Changed legend title
+  scale_color_brewer(palette = "Set1")
+dev.off()
+```
+
+
+
+
+##Performing K means
+
+
+```{r}
+#Changing to data matrix
+Data.soft <- data.frame(Data.soft)
+
+res.kmeans2 <- eclust(x = Data.soft, FUNcluster = "kmeans", k = 2,
+                      nstart = 10, seed = 123, graph = FALSE)
+
+#vidualise the result OF K means on PCA 
+p <- fviz_cluster(object = res.kmeans2, labelsize = 0)
+
+# Save the plot
+  ggsave(filename = "Kmeans_2.PNG", plot = p, width = 8, height = 6, dpi = 300, bg = "white")
+res.kmeans3 <- eclust(x = Data.soft, FUNcluster = "kmeans", k = 3,
+                      nstart = 10, seed = 123, graph = FALSE)
+
+#vidualise the result OF K means on PCA 
+p <- fviz_cluster(object = res.kmeans3, labelsize = 0)
+
+ggsave(filename = "Kmeans_3.PNG", plot = p, width = 8, height = 6, dpi = 300, bg = "white")
+res.kmeans4 <- eclust(x = Data.soft, FUNcluster = "kmeans", k = 4,
+                      nstart = 10, seed = 123, graph = FALSE)
+
+#vidualise the result OF K means on PCA 
+p <- fviz_cluster(object = res.kmeans4, labelsize = 0)
+
+ggsave(filename = "Kmeans_4.PNG", plot = p, width = 8, height = 6, dpi = 300, bg = "white")
+res.kmeans6 <- eclust(x = Data.soft, FUNcluster = "kmeans", k = 6,
+                      nstart = 10, seed = 123, graph = FALSE)
+#vidualise the result OF K means on PCA 
+p <- fviz_cluster(object = res.kmeans6, labelsize = 0)
+
+ggsave(filename = "Kmeans_6.PNG", plot = p, width = 8, height = 6, dpi = 300, bg = "white")
+ 
+```
+
+#Another way of representation using PCA
+```{r}
+res.pca2 <- PCA(Data.soft, ncp = 6, graph = FALSE)
+
+p <- fviz_pca_ind(res.pca2, geom = "point", habillage = as.factor(res.kmeans2$cluster),
+             addEllipses = FALSE, ellipse.type = "convex")
+ggsave(filename = "Kmeans_2.PNG", plot = p, width = 8, height = 6, dpi = 300, bg = "white")
+ 
+p <- fviz_pca_ind(res.pca2, geom = "point", habillage = as.factor(res.kmeans3$cluster),
+             addEllipses = FALSE, ellipse.type = "convex")
+ggsave(filename = "Kmeans_3.PNG", plot = p, width = 8, height = 6, dpi = 300, bg = "white")
+ 
+p <- fviz_pca_ind(res.pca2, geom = "point", habillage = as.factor(res.kmeans4$cluster),
+             addEllipses = FALSE, ellipse.type = "convex")
+ggsave(filename = "Kmeans_4.PNG", plot = p, width = 8, height = 6, dpi = 300, bg = "white")
+
+p <- fviz_pca_ind(res.pca2, geom = "point", habillage = as.factor(res.kmeans6$cluster),
+             addEllipses = FALSE, ellipse.type = "convex")
+ggsave(filename = "Kmeans_6.PNG", plot = p, width = 8, height = 6, dpi = 300, bg = "white")
+
+#Screeplot of PCA visualisation to see each pca how much of the data is captured 
+p <- fviz_screeplot(res.pca2, addlabels = TRUE, ylim = c(0, 50))
+```
+
+#Finding the optimal numbers of clusters 
+```{r message=FALSE, warning=FALSE}
+##Elbow method
+fviz_nbclust(x = Data.soft, FUNcluster = kmeans, nstart = 10, method = "wss")
+
+#silhouette method
+fviz_nbclust(x = Data.soft, FUNcluster = kmeans, nstart = 10, method = "silhouette")
+
+#Gap statsitics
+fviz_nbclust(x = Data.soft, FUNcluster = kmeans, nstart = 10, method = "gap_stat", nboot = 100)
+
+#NbClust
+res.nbclust <- NbClust(data = Data.soft, method = "kmeans", index = "all", max.nc = 10)
+fviz_nbclust(x = res.nbclust)
+```
+
+
+
+
+#Optimal number using the archetype package itself
+```{r}
+set.seed(1981)
+as.robust <- stepArchetypes(Data.soft, k = 1:10, method = robustArchetypes,  verbose = TRUE, nrep = 100)
+saveRDS(as.robust, file = "as.robust_compressed.rds", compress = TRUE)
+
+View(as.robust)
+```
+
+
+#Loading the as.robust
+```{r}
+as.robust <- readRDS("as.robust_compressed.rds")
+
+load("as.robust.RData")
+
+load("as.robust.RData")
+```
+
+
+#Loading the file for later use
+```{r}
+a2 <- as.robust[[2]]  # Extract archetype model for k = 2
+a3 <- as.robust[[3]]  # Extract archetype model for k = 3
+a4 <- as.robust[[4]]  # Extract archetype model for k = 4
+a6 <- as.robust[[6]]  # Extract archetype model for k = 6
+
+
+# If you want to inspect the alphas (archetype assignments)
+assignments_a2 <- bestModel(a2)$alphas
+assignments_a3 <- bestModel(a3)$alphas
+assignments_a4 <- bestModel(a4)$alphas
+assignments_a6 <- bestModel(a6)$alphas
+
+
+
+```
+
+
+#Saving the results
+```{r}
+# Save extracted models for later use
+saveRDS(list(a2 = a2, a3 = a3,  a4 = a4, a6 = a6), file = "extracted_archetypes.rds")
+```
+
+
+#Loading the results
+```{r}
+a2_a3_a4_a6 <- readRDS("extracted_archetypes.rds")
+```
+
+
+## #Visualisation of the whole archetypes using screeplot and Barplot
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+# Screeplot with lines (Base R)
+screeplot(as.robust, type = "lines")
+dev.copy(png, filename = "screeplot_robust_300.png", width = 7, height = 5, units = "in", res = 300)
+dev.off()
+dev.copy(png, filename = "screeplot_robust_600.png", width = 7, height = 5, units = "in", res = 600)
+dev.off()
+
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+# Screeplot with barplot (Base R)
+screeplot(as.robust, type = "barplot")
+dev.copy(png, filename = "barplot_robust_300.png", width = 7, height = 5, units = "in", res = 300)
+dev.off()
+
+dev.copy(png, filename = "barplot_robust_600.png", width = 7, height = 5, units = "in", res = 600)
+dev.off()
+
+# Save as PDF (vector)
+dev.copy(pdf, file = "barplot_robust.pdf", width = 7, height = 5)
+dev.off()
+
+
+```
+
+
+#Checking the stability of archetypes 
+```{r}
+set.seed(1981)
+
+library(archetypes)
+library(ggplot2)
+library(dplyr)
+library(fossil)
+library(tidyr)
+cutoff_values <- seq(0, 1, by = 0.05)
+k_values <- 1:10
+original_assignments_list <- list()
+
+for (k in k_values) {
+  original_assignments_list[[k]] <- lapply(cutoff_values, function(cutoff) {
+    alphas <- bestModel(as.robust[[k]])$alphas
+    apply(alphas > cutoff, 1, function(x) ifelse(any(x), which(x), NA))
+  })
+}
+print("ok - original assignments list created for k = 1 to 10")
+
+calculate_stability <- function(k, cutoff, data, original_assignments, n_iterations = 100) { 
+  print(paste("Starting stability calculation for k =", k, "and cutoff =", cutoff))
+  rand_indices <- numeric(n_iterations)
+  
+  for (i in 1:n_iterations) {
+    subsample <- sample(nrow(data), size = floor(0.9 * nrow(data)))
+    subdata <- data[subsample, ]
+    
+    submodel <- tryCatch(
+      archetypes(subdata, family = archetypesFamily("robust"), k = k),
+      error = function(e) {
+        print(paste("Error in archetypes:", e$message))
+        return(NULL)
+      }
+    )
+    
+    if (is.null(submodel)) {
+      rand_indices[i] <- NA
+      next
+    }
+    
+    sub_alphas <- coef(submodel, type = "alphas")
+    
+    if (is.null(sub_alphas) || ncol(sub_alphas) == 0) {
+      rand_indices[i] <- NA
+      next
+    }
+    
+    sub_assignments <- apply(sub_alphas > cutoff, 1, function(x) ifelse(any(x), which(x)[1], NA))
+    
+    if (length(original_assignments[subsample]) == length(sub_assignments)) {
+      rand_indices[i] <- adj.rand.index(original_assignments[subsample], sub_assignments)
+    } else {
+      rand_indices[i] <- NA
+    }
+  }
+  
+  return(rand_indices)
+}
+
+print("ok - calculate_stability function defined")
+
+# Main calculation loop
+stability_results <- expand.grid(k = k_values, cutoff = cutoff_values)
+stability_results$iterations <- I(rep(list(numeric(100)), nrow(stability_results)))
+
+for (i in 1:nrow(stability_results)) {
+  stability_results$iterations[[i]] <- calculate_stability(
+    stability_results$k[i],
+    stability_results$cutoff[i],
+    Data.soft,
+    original_assignments_list[[stability_results$k[i]]][[which(cutoff_values == stability_results$cutoff[i])]]
+  )
+  
+  # Save the mean ARI as well
+  stability_results$stability[i] <- mean(stability_results$iterations[[i]], na.rm = TRUE)
+}
+
+# Save results
+save(stability_results, file = "robust_stability_results_k1-10.RData")
+write.csv(stability_results, "robust_stability_results_k1-10.csv", row.names = FALSE)
+
+```
+
+##Visualisation-Homa's code 
+```{r}
+# Visualizations
+ggplot(stability_results, aes(x = cutoff, y = stability, color = factor(k))) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(title = "Archetype Stability across Thresholds",
+       x = "Membership Cutoff",
+       y = "Stability (Mean ARI)",
+       color = "Number of Archetypes (k)") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
+
+ggsave("robust_stability_lineplot_k1-10.png", width = 12, height = 8, dpi = 600)
+ggsave("robust_stability_lineplot_k1-10.pdf", width = 12, height = 8, dpi = 600)
+
+##
+stability_boxplot_data <- stability_results %>%
+  unnest(iterations)
+
+# Visualizations
+ggplot(stability_boxplot_data, aes(x = cutoff, y = stability, color = factor(k))) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(title = "Archetype Stability across Thresholds",
+       x = "Membership Cutoff",
+       y = "Stability (Mean ARI)",
+       color = "Number of Archetypes (k)") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")
+
+ggsave("robust_stability_lineplot_k1-10.png", width = 12, height = 8, dpi = 600)
+
+
+
+
+# Boxplot
+stability_boxplot_data <- stability_results %>%
+  unnest(iterations)
+
+ggplot(stability_boxplot_data, aes(x = factor(cutoff), y = iterations, fill = factor(k))) +
+  geom_boxplot(outlier.shape = NA, size = 1, alpha = 0.7) +
+  labs(title = "Archetype Stability across Thresholds",
+       x = "Membership Cutoff",
+       y = "Stability (ARI)",
+       fill = "Number of Archetypes (k)") +
+  theme_minimal() +
+  scale_fill_brewer(palette = "Set3") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+
+ggsave("robust_stability_boxplot_k1-10.png", width = 15, height = 10, dpi = 300)
+
+print("Analysis completed for k = 1 to 10")
+
+##The best one 
+# Boxplot (comapring various cut offs)
+stability_boxplot_data <- stability_results %>%
+  unnest(iterations)
+
+ggplot(stability_boxplot_data, aes(x = as.factor(cutoff), y = iterations)) +
+  geom_boxplot( alpha = 0.7, color = "black", fill = "lightblue") +  # Boxplot with clear outline
+  labs(title = "Archetype Stability Across Membership Thresholds",
+       x = "Membership Cutoff",
+       y = "Adjusted Rand Index (ARI)") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        plot.title = element_text(face = "bold", size = 16))
+
+ggsave("robust_stability_boxplot-comparing cutoffs_k1-10.png", width = 15, height = 10, dpi = 600, bg = "white")
+ggsave("robust_stability_boxplot-comparing cutoffs_k1-10.pdf", width = 15, height = 10, dpi = 600, bg = "white")
+
+#comparing different ks
+ggplot(stability_results, aes(x = as.factor(k), y = stability)) +
+  geom_boxplot( alpha = 0.7, color = "black", fill = "lightblue") +  # Boxplot with clear outline
+  labs(title = "Archetype Stability Across diffrent Ks",
+       x = "K",
+       y = "Adjusted Rand Index (ARI)") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 12),
+        axis.text.y = element_text(size = 12),
+        plot.title = element_text(face = "bold", size = 16))
+
+ggsave("robust_stability_boxplot-comparing different ks_k1-10.png", width = 15, height = 10, dpi = 600, bg = "white")
+
+ggsave("robust_stability_boxplot-comparing different ks_k1-10.pdf", width = 15, height = 10, dpi = 600, bg = "white")
+stability_k2 <- stability_results %>%
+  unnest(iterations) %>%
+  filter(k == 2)
+ggplot(stability_k2, aes(x = as.factor(cutoff), y = iterations)) +
+  geom_boxplot( alpha = 0.7, color = "black", fill = "lightblue") +  
+  labs(title = "Archetype Stability for k = 2",
+       x = "Membership Cutoff",
+       y = "Adjusted Rand Index (ARI)") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Save plot
+ggsave("robust_boxplot_k2.png", width = 10, height = 6, dpi = 600, bg = "white")
+ggsave("robust_boxplot_k2.pdf", width = 10, height = 6, dpi = 600, bg = "white")
+
+print("Boxplot for k = 2 created successfully!")
+stability_k3 <- stability_results %>%
+  unnest(iterations) %>%
+  filter(k == 3)
+ggplot(stability_k3, aes(x = as.factor(cutoff), y = iterations)) +
+  geom_boxplot( alpha = 0.7, color = "black", fill = "lightblue") +  
+  labs(title = "Archetype Stability for k = 3",
+       x = "Membership Cutoff",
+       y = "Adjusted Rand Index (ARI)") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Save plot
+ggsave("robust_boxplot_k3.png", width = 10, height = 6, dpi = 600, bg = "white")
+ggsave("robust_boxplot_k3.pdf", width = 10, height = 6, dpi = 600, bg = "white")
+
+print("Boxplot for k = 3 created successfully!")
+stability_k4 <- stability_results %>%
+  unnest(iterations) %>%
+  filter(k == 4)
+ggplot(stability_k4, aes(x = as.factor(cutoff), y = iterations)) +
+  geom_boxplot(alpha = 0.7, color = "black", fill = "lightblue") +  
+  labs(title = "Archetype Stability for k = 4",
+       x = "Membership Cutoff",
+       y = "Adjusted Rand Index (ARI)") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Save plot
+ggsave("robust_boxplot_k4.png", width = 10, height = 6, dpi = 600, bg = "white")
+ggsave("robust_boxplot_k4.pdf", width = 10, height = 6, dpi = 600, bg = "white")
+
+print("Boxplot for k = 4 created successfully!")
+stability_k4 <- stability_results %>%
+  unnest(iterations) %>%
+  filter(k == 5)
+ggplot(stability_k4, aes(x = as.factor(cutoff), y = iterations)) +
+  geom_boxplot(alpha = 0.7, color = "black", fill = "lightblue") +  
+  labs(title = "Archetype Stability for k = 4",
+       x = "Membership Cutoff",
+       y = "Adjusted Rand Index (ARI)") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Save plot
+ggsave("robust_boxplot_k5.png", width = 10, height = 6, dpi = 600, bg = "white")
+ggsave("robust_boxplot_k5.pdf", width = 10, height = 6, dpi = 600, bg = "white")
+
+print("Boxplot for k = 5created successfully!")
+stability_k6 <- stability_results %>%
+  unnest(iterations) %>%
+  filter(k == 6)
+ggplot(stability_k6, aes(x = as.factor(cutoff), y = iterations)) +
+  geom_boxplot( alpha = 0.7, color = "black", fill = "lightblue") +  
+  labs(title = "Archetype Stability for k = 6",
+       x = "Membership Cutoff",
+       y = "Adjusted Rand Index (ARI)") +
+  theme_minimal(base_size = 14) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+# Save plot
+ggsave("robust_boxplot_k6.png", width = 10, height = 6, dpi = 300, bg = "white")
+ggsave("robust_boxplot_k6.pdf", width = 10, height = 6, dpi = 600, bg = "white")
+print("Boxplot for k = 6 created successfully!")
+
+
+stability_filtered <- stability_results %>%
+  unnest(iterations) %>%
+  filter(k %in% c(2, 3, 4, 5, 6))  # Keep only k = 2 to 6
+
+# Compute mean iterations per cutoff and k
+stability_summary <- stability_filtered %>%
+  group_by(k, cutoff) %>%  # Group by k and cutoff
+  summarize(mean_iterations = mean(iterations, na.rm = TRUE), .groups = "drop")
+
+# Line plot for mean iterations across different k values
+ggplot(stability_summary, aes(x = cutoff, y = mean_iterations, color = factor(k))) +
+  geom_line(size = 1) +  # Line for each k
+  geom_point(size = 2) +  # Add points for better visibility
+  labs(title = "Iteration Stability Across Different K Values",
+       x = "Cutoff",
+       y = "Mean Number of Iterations",
+       color = "Number of Archetypes (k)") +
+  theme_minimal() +
+  scale_color_brewer(palette = "Set1")  # Distinct colors for each k
+```
+#reading Sapna's result and plotting based on the Sapna's result
+```{r}
+##set working directory
+setwd(Sys.getenv("KORA_RUN_DIR"))
+list.files()
+
+#reading csv files
+
+k2_sh <- read.csv(file = "stability_results_k2_sh.csv", dec = ".", sep = ",")
+k3_sh <- read.csv(file = "stability_results_k3_sh.csv", dec = ".", sep = ",")
+k4_sh <- read.csv(file = "stability_results_k4_sh.csv", dec = ".", sep = ",")
+k5_sh <- read.csv(file = "stability_results_k5_sh.csv", dec = ".", sep = ",")
+k6_sh <- read.csv(file = "stability_results_k6_sh.csv", dec = ".", sep = ",")
+k7_sh <- read.csv(file = "stability_results_k7_sh.csv", dec = ".", sep = ",")
+k8_sh <- read.csv(file = "stability_results_k8_sh.csv", dec = ".", sep = ",")
+k9_sh <- read.csv(file = "stability_results_k9_sh.csv", dec = ".", sep = ",")
+
+#Merging the files together
+stability_results_robust_sh <- rbind(k2_sh,k3_sh,k4_sh,k5_sh,k6_sh,k7_sh,k8_sh,k9_sh)
+```
+
+
+
+
+
+
+
+
+##Visualisation to compare all the Ks anad cutoff (the main viusualisation)--Homa--Ultimate important one 
+```{r}
+
+setwd(Sys.getenv("KORA_RUN_DIR"))
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+cluster_results <- stability_results_robust_sh # Replace with your actual data name
+cluster_long <- cluster_results %>%
+  pivot_longer(cols = starts_with("X"), names_to = "iteration", values_to = "ARI") %>%
+  mutate(k = as.factor(k), cutoff = as.factor(cutoff))
+
+# Plot
+ggplot(cluster_long, aes(x = k, y = ARI)) +
+  geom_boxplot(fill = "grey80", color = "black") +
+  facet_wrap(~ cutoff, ncol = 4, labeller = label_both) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Adjusted Rand Index across Clusters and Cutoff Values",
+    x = "Number of Clusters (k)",
+    y = "Adjusted Rand Index (ARI)"
+  )
+
+
+###
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+cluster_long <- cluster_results %>%
+  pivot_longer(cols = starts_with("X"), names_to = "iteration", values_to = "ARI") %>%
+  mutate(k = as.factor(k), cutoff = as.factor(cutoff))
+
+# Plot
+ggplot(cluster_long, aes(x = k, y = ARI)) +
+  geom_boxplot(fill = "grey80", color = "black") +
+  facet_wrap(~ cutoff, ncol = 4, labeller = label_both) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Adjusted Rand Index across Clusters and Cutoff Values",
+    x = "Number of Clusters (k)",
+    y = "Adjusted Rand Index (ARI)"
+  )
+
+
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+cluster_long <- cluster_results %>%
+  pivot_longer(cols = starts_with("X"), names_to = "iteration", values_to = "ARI") %>%
+  filter(cutoff >= 0.2, cutoff <= 0.9) %>%
+  mutate(k = as.factor(k), cutoff = as.factor(cutoff))
+
+# Plot
+ggplot(cluster_long, aes(x = k, y = ARI)) +
+  geom_boxplot(fill = "grey80", color = "black") +
+  facet_wrap(~ cutoff, ncol = 4, labeller = label_both) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Adjusted Rand Index across Clusters and Cutoff Values (0.2–0.9)",
+    x = "Number of Clusters (k)",
+    y = "Adjusted Rand Index (ARI)"
+  )
+ggsave("archeatype-stabilty-different-cutoffs.png", width = 15, height = 10, dpi = 600, bg = "white")
+ggsave("archeatype-stabilty-different-cutoffs.pdf", width = 15, height = 10, dpi = 600, bg = "white")
+```
+
+
+#Stability code of Sapna.finalised 
+##Sapna has changed the archetypes(subdata, k = k) to  archetypes(subdata, family = archetypesFamily("robust"), k = k)
+```{r}
+set.seed(1981)
+# Precompute original archetypes assignments
+cutoff_values <- seq(0.05, 0.95, by = 0.05)  # Define multiple cutoff values
+original_assignments_list <- lapply(cutoff_values, function(cutoff) {
+    alphas <- bestModel(as[[k_value]])$alphas
+    apply(alphas > cutoff, 1, function(x) ifelse(any(x), which(x), NA))
+})
+names(original_assignments_list) = cutoff_values
+
+print("ok - original assignments list created")
+
+calculate_stability <- function(k, cutoff, data, original_assignments, n_iterations = 100) { 
+  print(paste("Starting stability calculation for k =", k, "and cutoff =", cutoff))
+  rand_indices <- numeric(n_iterations)
+  
+  for (i in 1:n_iterations) {
+    subsample <- sample(nrow(data), size = floor(0.9 * nrow(data)))
+    subdata <- data[subsample, ]
+    
+    # Fit archetypes on subsampled data
+    submodel <- tryCatch(
+      archetypes(subdata, family = archetypesFamily("robust"), k = k),
+      error = function(e) {
+        print(paste("Error in archetypes:", e$message))
+        return(NULL)
+      }
+    )
+    
+    if (is.null(submodel)) {
+      print("Submodel is NULL")
+      rand_indices[i] <- NA
+      next
+    }
+    
+    sub_alphas <- coef(submodel, type = "alphas")
+    
+    if (is.null(sub_alphas) || ncol(sub_alphas) == 0) {
+      print("sub_alphas is NULL or has 0 columns")
+      rand_indices[i] <- NA
+      next
+    }
+    
+    # Get original archetypes for comparison
+    
+    # Get assignments for subsampled data
+    sub_assignments <- apply(sub_alphas > cutoff, 1, function(x) ifelse(any(x), which(x)[1], NA))
+    
+    # Print lengths for debugging
+    print(paste("Length of original_assignments[subsample]:", length(original_assignments[subsample])))
+    print(paste("Length of sub_assignments:", length(sub_assignments)))
+    
+    # Check lengths and calculate adjusted Rand index
+    if (length(original_assignments[subsample]) == length(sub_assignments)) {
+      rand_indices[i] <- adj.rand.index(original_assignments[subsample], sub_assignments)
+      print(paste("Iteration", i, "ARI:", rand_indices[i]))
+    } else {
+      print("Length mismatch in assignments")
+      rand_indices[i] <- NA
+    }
+  }
+  
+  result <- mean(rand_indices, na.rm = TRUE)
+  print(paste("Stability calculation completed. Result:", result))
+  return(rand_indices)
+  #return(result)
+}
+print("ok - calculate_stability function defined")
+
+# Main calculation loop
+stability_results <- NULL
+stability_results <- expand.grid(k = k_value, cutoff = cutoff_values)
+
+
+coll_stability = NULL
+for (i in 1:nrow(stability_results)) {
+  stability <- NULL
+  stability <- calculate_stability(
+    stability_results$k[i],
+    stability_results$cutoff[i],
+    Data.soft,
+    original_assignments_list[[as.character(stability_results$cutoff[i])]]
+  )
+  coll_stability = rbind(coll_stability,stability)
+}
+
+stability_results$mean = rowMeans(coll_stability)
+stability_results = cbind(stability_results,coll_stability)
+
+# Save results
+write.csv(stability_results, paste0("stability_results_k",k_value,"_sh.csv"), row.names = FALSE)
+
+```
+
+
+
+##treshold 
+```{r}
+# Recorded participant-derived output omitted from the public source.
+```
+
+
+
+#Specifiying participants with extreme archetypes and mixed etiology 
+```{r}
+#chang the assignements
+# Get the indices of extreme archetypes
+Extreme.archetype_indices <- which(assignments_a4 > 0.7, arr.ind = TRUE)  # Get indices of extreme archetypes with #information about the row and coloms 
+Extreme.archetype_indices
+Participants.number <- Extreme.archetype_indices[,c(1,2)]
+
+Participants.number <- data.frame(Participant_Number = Participants.number[, 1],
+                                  Archetype_Number = Participants.number[, 2])
+Participants.number
+
+# Initialize Extreme_Archetype_Number with NA
+Data.soft$Extreme_Archetype_Number <- NA  
+
+# Populate Extreme_Archetype_Number for extreme participants
+for (i in 1:nrow(Participants.number)) {
+  participant_id <- Participants.number$Participant_Number[i]
+  archetype_id <- Participants.number$Archetype_Number[i]
+  
+  # Assign the archetype number to the corresponding participant in Data.soft
+  Data.soft$Extreme_Archetype_Number[participant_id] <- archetype_id
+}
+
+mixed_etiology <- which(apply(assignments_a4, 1, function(x) all(x < 0.7)))#change the assignment
+
+# Assign a specific value for mixed etiology participants in Extreme_Archetype_Number
+Data.soft$Extreme_Archetype_Number[mixed_etiology] <- "Mixed Etiology"  # You can change this label as needed
+
+
+```
+
+#Calculating the silhoutte index 
+```{r}
+
+dist_matrix <- dist(Data.soft)
+
+#Define your group labels 
+group_labels <- Data.soft$Extreme_Archetype_Number
+group_labels[group_labels == "Mixed Etiology"] <- 5
+
+# Ensure that `group_labels` are numeric, if not convert them
+group_labels <- as.numeric(factor(group_labels))
+
+# Perform Silhouette analysis
+sil <- silhouette(group_labels, dist_matrix)
+
+# Visualize the Silhouette plot with correct labels
+p <- fviz_silhouette(sil, label = TRUE, palette = "jco", 
+                title = "Silhouette Plot for Archetypes")
+
+ggsave("silhouette_mixed_etiology.png",plot = p, width = 8, height = 5, dpi = 300)
+
+```
+```{r}
+
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Perform PCA on numeric data
+pca_res <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- as.data.frame(pca_res$x)
+
+# Ensure the PCA scores have the same number of rows as Data.soft
+pca_scores$Extreme_Archetype_Number <- Data.soft$Extreme_Archetype_Number
+pca_scores$Extreme_Archetype_Number <- factor(pca_scores$Extreme_Archetype_Number, 
+                                              levels = c("1", "2", "3"), 
+                                              labels = c("1", "2", "Mixed Etiology"))
+
+# Define colors for archetypes
+archetype_colors <- c("1" = "red", "2" = "blue", "Mixed Etiology" = "grey")  
+p <- ggplot(pca_scores, aes(x = PC1, y = PC2, color = Extreme_Archetype_Number)) +
+  geom_point(alpha = 0.7) +
+  scale_color_manual(values = archetype_colors) +
+  labs(title = "PCA Plot with Archetype Assignments",
+       x = "PC1",
+       y = "PC2",
+       color = "Archetype") +
+  theme_minimal()
+
+# Convert ggplot to an interactive plot using plotly
+ggplotly(p)
+
+ggsave("PCA_Archetype_Plot.png", plot = p, width = 8, height = 6, dpi = 300)
+ggsave("PCA_Archetype_Plot.pdf", plot = p, width = 8, height = 6)
+
+```
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Perform PCA on numeric data
+pca_res <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- as.data.frame(pca_res$x)
+
+# Ensure Extreme_Archetype_Number is a character before conversion
+pca_scores$Extreme_Archetype_Number <- as.character(Data.soft$Extreme_Archetype_Number)
+
+# Replace any NA values with "Mixed Etiology"
+pca_scores$Extreme_Archetype_Number[is.na(pca_scores$Extreme_Archetype_Number)] <- "Mixed Etiology"
+
+# Convert to a factor with **only archetype numbers & mixed etiology**
+pca_scores$Extreme_Archetype_Number <- factor(
+  pca_scores$Extreme_Archetype_Number,
+  levels = c("1", "2", "3", "4", "Mixed Etiology")  # No group names
+)
+
+# Define colors for archetypes (same order as factor levels)
+archetype_colors <- c(
+  "1" = "red",
+  "2" = "blue",
+  "3" = "lightgreen",
+  "4" = "purple",
+  "Mixed Etiology" = "grey80"##faded grey
+)
+p <- ggplot(pca_scores, aes(x = PC1, y = PC2, color = Extreme_Archetype_Number)) +
+  geom_point(alpha = 0.7) +
+  scale_color_manual(values = archetype_colors) +
+  labs(title = "PCA Plot with Archetype Assignments",
+       x = "PC1",
+       y = "PC2",
+       color = "Archetype") +  # Keeps only "Archetype" in the legend
+  theme_minimal() +
+  theme(legend.position = "right",
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 10))
+
+# Convert ggplot to an interactive plot using plotly
+ggplotly(p)
+
+# Save the plot
+ggsave("k4-PCA_Archetype_Plot_Fixed.png", plot = p, width = 8, height = 6, dpi = 600,bg = "white")
+ggsave("k4-PCA_Archetype_Plot_Fixed.pdf", plot = p, width = 8, height = 6)
+
+
+```
+
+#In case of running an issue in the NA in the legend just run the the follwoing again pca_scores$Extreme_Archetype_Number[is.na(pca_scores$Extreme_Archetype_Number)] <- "Mixed Etiology"
+
+```{r}
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Perform PCA on numeric data
+pca_res <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- as.data.frame(pca_res$x)
+
+# Ensure Extreme_Archetype_Number is a character before conversion
+pca_scores$Extreme_Archetype_Number <- as.character(Data.soft$Extreme_Archetype_Number)
+
+# Replace any NA values with "Mixed Etiology" before converting to factor
+pca_scores$Extreme_Archetype_Number[is.na(pca_scores$Extreme_Archetype_Number)] <- "Mixed Etiology"
+
+# Convert to a factor, explicitly including "Mixed Etiology"
+pca_scores$Extreme_Archetype_Number <- factor(
+  pca_scores$Extreme_Archetype_Number, 
+  levels = c("1", "2", "3", "4", "5","6","Mixed Etiology")  # Ensure NA is not included
+)
+
+
+# Define colors for archetypes (same order as factor levels)
+archetype_colors <- c(
+  "1" = "red",
+  "2" = "blue",
+  "3" = "lightgreen",
+  "4" = "purple",
+  "5" = "#E7B800",
+  "6" = "#00AFBB",
+  "Mixed Etiology" = "grey80"##faded grey
+)
+p <- ggplot(pca_scores, aes(x = PC1, y = PC2, color = Extreme_Archetype_Number)) +
+  geom_point(alpha = 0.7) +
+  scale_color_manual(values = archetype_colors) +
+  labs(title = "PCA Plot with Archetype Assignments",
+       x = "PC1",
+       y = "PC2",
+       color = "Archetype") +  # Keeps only "Archetype" in the legend
+  theme_minimal() +
+  theme(legend.position = "right",
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 10))
+
+# Convert ggplot to an interactive plot using plotly
+ggplotly(p)
+
+# Save the plot
+ggsave("k6-PCA_Archetype_Plot_Fixed.png", plot = p, width = 8, height = 6, dpi = 300,bg = "white")
+ggsave("k6-PCA_Archetype_Plot_Fixed.pdf", plot = p, width = 8, height = 6)
+```
+
+```{r}
+library(scatterplot3d)
+
+# Ensure 'Extreme_Archetype_Number' is a factor with correct labels
+Data.soft$Extreme_Archetype_Number <- factor(Data.soft$Extreme_Archetype_Number, 
+                                             levels = c(1, 2, 3), 
+                                             labels = c("1", "2", "Mixed Etiology"))
+
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Perform PCA on numeric data
+pca_result <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- data.frame(pca_result$x)
+
+# Add archetype labels to PCA data
+pca_scores$Extreme_Archetype_Number <- Data.soft$Extreme_Archetype_Number
+
+# Define color mapping
+all_colors <- rep("grey", nrow(pca_scores))  # Default color for Mixed Etiology
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "1"] <- "red"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "2"] <- "blue"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "Mixed Etiology"] <- "grey"
+scatterplot3d(x = pca_scores$PC1, y = pca_scores$PC2, z = pca_scores$PC3,
+              xlab = "PC1", ylab = "PC2", zlab = "PC3", 
+              color = all_colors,
+              pch = 16,
+              main = "3D PCA Plot of Archetypes",
+              grid = TRUE, 
+              box = FALSE)
+legend("topright", legend = levels(Data.soft$Extreme_Archetype_Number), 
+       col = c("red", "blue", "grey"), pch = 16)
+
+```
+
+
+```{r}
+library(scatterplot3d)
+
+# Ensure 'Extreme_Archetype_Number' is a factor with correct labels
+Data.soft$Extreme_Archetype_Number <- factor(Data.soft$Extreme_Archetype_Number, 
+                                             levels = c(1, 2, 3), 
+                                             labels = c("1", "2", "Mixed Etiology"))
+
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Perform PCA on numeric data
+pca_result <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- data.frame(pca_result$x)
+
+# Add archetype labels to PCA data
+pca_scores$Extreme_Archetype_Number <- Data.soft$Extreme_Archetype_Number
+
+# Define color mapping
+all_colors <- rep("grey", nrow(pca_scores))  # Default color for Mixed Etiology
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "1"] <- "red"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "2"] <- "blue"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "Mixed Etiology"] <- "grey"
+scatterplot3d(x = pca_scores$PC1, y = pca_scores$PC2, z = pca_scores$PC3,
+              xlab = "PC1", ylab = "PC2", zlab = "PC3", 
+              color = all_colors,
+              pch = 16,
+              main = "3D PCA Plot of Archetypes",
+              grid = TRUE, 
+              box = FALSE)
+legend("topright", legend = levels(Data.soft$Extreme_Archetype_Number), 
+       col = c("red", "blue", "grey"), pch = 16)
+
+
+```
+```{r}
+
+# Ensure 'Extreme_Archetype_Number' is a factor with correct labels
+Data.soft$Extreme_Archetype_Number <- factor(Data.soft$Extreme_Archetype_Number, 
+                                             levels = c(1, 2, 3), 
+                                             labels = c("1", "2", "Mixed Etiology"))
+
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Perform PCA on numeric data
+pca_result <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- data.frame(pca_result$x)
+
+# Add archetype labels to PCA data
+pca_scores$Extreme_Archetype_Number <- Data.soft$Extreme_Archetype_Number
+
+# Define color mapping
+all_colors <- rep("grey", nrow(pca_scores))  # Default color for Mixed Etiology
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "1"] <- "red"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "2"] <- "blue"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "Mixed Etiology"] <- "grey"
+scatterplot3d(x = pca_scores$PC1, y = pca_scores$PC2, z = pca_scores$PC3,
+              xlab = "PC1", ylab = "PC2", zlab = "PC3", 
+              color = all_colors,
+              pch = 16,
+              main = "3D PCA Plot of Archetypes",
+              grid = TRUE, 
+              box = FALSE)
+
+# Add legend
+legend("topright", legend = levels(Data.soft$Extreme_Archetype_Number), 
+       col = c("red", "blue", "grey"), pch = 16)
+
+
+
+```
+```{r}
+
+# Ensure 'Extreme_Archetype_Number' is a factor with correct labels
+Data.soft$Extreme_Archetype_Number <- factor(Data.soft$Extreme_Archetype_Number, 
+                                             levels = c(1, 2, 3, 4, 5), 
+                                             labels = c("1", "2","3", "4", "Mixed Etiology"))
+
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Perform PCA on numeric data
+pca_result <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- data.frame(pca_result$x)
+
+# Add archetype labels to PCA data
+pca_scores$Extreme_Archetype_Number <- Data.soft$Extreme_Archetype_Number
+
+# Define color mapping
+all_colors <- rep("grey", nrow(pca_scores))  # Default color for Mixed Etiology
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "1"] <- "red"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "2"] <- "blue"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "3"] <- "lightgreen"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "4"] <- "purple"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "Mixed Etiology"] <- "grey"
+scatterplot3d(x = pca_scores$PC1, y = pca_scores$PC2, z = pca_scores$PC3,
+              xlab = "PC1", ylab = "PC2", zlab = "PC3", 
+              color = all_colors,
+              pch = 16,
+              main = "3D PCA Plot of Archetypes",
+              grid = TRUE, 
+              box = FALSE)
+
+# Add legend
+legend("topright", legend = levels(Data.soft$Extreme_Archetype_Number), 
+       col = c("red", "blue","lightgreen", "purple", "grey"), pch = 16)
+
+
+```
+```{r}
+
+# Ensure 'Extreme_Archetype_Number' is a factor with  
+Data.soft$Extreme_Archetype_Number <- factor(Data.soft$Extreme_Archetype_Number, 
+levels = c(1, 2, 3, 4, 5), 
+labels = c("1", "2","3","4", "Mixed Etiology"))
+
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Ensure PCA does not remove rows due to missing values
+Data.soft_numeric <- na.omit(Data.soft_numeric)  # Drop rows with NAs
+
+# Perform PCA on numeric data
+pca_result <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- as.data.frame(pca_result$x)
+
+# Check if row counts match
+if (nrow(pca_scores) == nrow(Data.soft_numeric)) {
+    pca_scores$Extreme_Archetype_Number <- Data.soft$Extreme_Archetype_Number
+} else {
+    stop("Row mismatch after PCA. Ensure Data.soft and PCA data have the same rows.")
+}
+
+# Check if 'Mixed Etiology' is present
+table(pca_scores$Extreme_Archetype_Number)  # Should now show correct counts
+
+# Define color mapping
+archetype_colors <- c("1" = "red", "2" = "blue","3"="lightgreen", "4" = "purple",  "Mixed Etiology" = "grey") 
+p <- plot_ly(data = pca_scores, 
+             x = ~PC1, y = ~PC2, z = ~PC3, 
+             color = ~Extreme_Archetype_Number, 
+             colors = archetype_colors) %>%
+  add_markers(size = 3) %>%
+  layout(scene = list(xaxis = list(title = "PC1"),
+                      yaxis = list(title = "PC2"),
+                      zaxis = list(title = "PC3")),
+         title = "3D PCA Plot of Archetypes")
+
+# Save the interactive plot as HTML
+saveWidget(as_widget(p), "PCA_3D_Plot.html")
+
+# Display the plot
+print(p)
+
+```
+```{r}
+
+# Ensure 'Extreme_Archetype_Number' is a factor with correct labels
+Data.soft$Extreme_Archetype_Number <- factor(Data.soft$Extreme_Archetype_Number, 
+                                             levels = c(1, 2, 3, 4, 5, 6, 7), 
+                                             labels = c("1", "2","3","4","5","6", "Mixed Etiology"))
+
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Perform PCA on numeric data
+pca_result <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- data.frame(pca_result$x)
+
+# Replace any NA values with "Mixed Etiology" before converting to factor
+#pca_scores$Extreme_Archetype_Number[is.na(pca_scores$Extreme_Archetype_Number)] <- "Mixed Etiology"
+
+# Add archetype labels to PCA data
+pca_scores$Extreme_Archetype_Number <- Data.soft$Extreme_Archetype_Number
+
+# Define color mapping
+all_colors <- rep("grey", nrow(pca_scores))  # Default color for Mixed Etiology
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "1"] <- "red"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "2"] <- "blue"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "3"] <- "lightgreen"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "4"] <- "purple"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "5"] <- "#E7B800"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "6"] <- "#00AFBB"
+all_colors[as.character(pca_scores$Extreme_Archetype_Number) == "Mixed Etiology"] <- "grey"
+
+png("k6-PCA_Archetype_Plot_Fixed.png", width = 800, height = 600, res = 300, bg = "white")
+p <- scatterplot3d(x = pca_scores$PC1, y = pca_scores$PC2, z = pca_scores$PC3,
+              xlab = "PC1", ylab = "PC2", zlab = "PC3", 
+              color = all_colors,
+              pch = 16,
+              main = "3D PCA Plot of Archetypes",
+              grid = TRUE, 
+              box = FALSE)
+
+# Add legend
+legend("topright", legend = levels(Data.soft$Extreme_Archetype_Number), 
+       col = c("red", "blue","lightgreen","purple","#E7B800", "#00AFBB","grey"), pch = 16)
+
+print(p)
+
+```
+```{r}
+# Ensure 'Extreme_Archetype_Number' is a factor with correct labels
+Data.soft$Extreme_Archetype_Number <- factor(Data.soft$Extreme_Archetype_Number, 
+                                             levels = c("1", "2", "Mixed Etiology"))
+
+# Select only numeric columns for PCA
+Data.soft_numeric <- Data.soft[, sapply(Data.soft, is.numeric)]
+
+# Ensure PCA does not remove rows due to missing values
+Data.soft_numeric <- na.omit(Data.soft_numeric)  # Drop rows with NAs
+
+# Perform PCA on numeric data
+pca_result <- prcomp(Data.soft_numeric, center = TRUE, scale. = TRUE)
+
+# Convert PCA results into a data frame
+pca_scores <- as.data.frame(pca_result$x)
+
+# Check if row counts match
+if (nrow(pca_scores) == nrow(Data.soft_numeric)) {
+    pca_scores$Extreme_Archetype_Number <- Data.soft$Extreme_Archetype_Number
+} else {
+    stop("Row mismatch after PCA. Ensure Data.soft and PCA data have the same rows.")
+}
+
+# Check if 'Mixed Etiology' is present
+table(pca_scores$Extreme_Archetype_Number)  # Should now show correct counts
+
+# Define color mapping
+archetype_colors <- c("1" = "red", "2" = "blue", "Mixed Etiology" = "grey") 
+p <- plot_ly(data = pca_scores, 
+             x = ~PC1, y = ~PC2, z = ~PC3, 
+             color = ~Extreme_Archetype_Number, 
+             colors = archetype_colors) %>%
+  add_markers(size = 3) %>%
+  layout(scene = list(xaxis = list(title = "PC1"),
+                      yaxis = list(title = "PC2"),
+                      zaxis = list(title = "PC3")),
+         title = "3D PCA Plot of Archetypes")
+
+# Save the interactive plot as HTML
+saveWidget(as_widget(p), "PCA_3D_k6-Plot.html")
+
+# Install required packages if not already installed
+if (!requireNamespace("orca", quietly = TRUE)) install.packages("orca")
+if (!requireNamespace("webshot", quietly = TRUE)) install.packages("webshot")
+
+
+# Save as PNG
+save_image(p, "3D_PCA_6k-Archetype_Plot.png")
+
+# Save as PDF
+save_image(p, "3D_PCA_6k-Archetype_Plot.pdf")
+
+
+# Display the plot
+print(p)
+
+
+```
+
+
+##Pie chart Visualisation (not the ultimate one, the ultimate one is in the next chunk of code)
+```{r}
+#For saving figures
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+pdf("Archetype_Distribution_PieChart.4K.pdf", width = 12, height = 10)
+
+counts <- table(Data.soft$Extreme_Archetype_Number)
+
+# Calculate percentages for each archetype based on the counts
+percentages <- round(100 * counts / sum(counts), 1)
+
+# Create labels for pie chart that combine archetype names, counts, and percentages
+simple_labels <- c("Archetype 1", "Archetype 2", "Archetype 3", " Archetype 4", "Mixed Etiology")
+
+
+# Create labels that combine simple archetype names, counts, and percentages for the pie chart
+labels <- paste0(simple_labels, ": ", counts, " (", percentages, "%)")  # Corrected concatenation
+
+
+# Create a pie chart to visualize the distribution of individuals across archetypes
+pie(counts, 
+    labels = labels,                                   # Use detailed labels on the pie chart
+    col = c("red","blue", "lightgreen","purple","grey"),      # Colors for each archetype
+    main = "Archetype Distribution")                  # Title of the pie chart
+
+# Add a legend to the pie chart
+legend("topleft",                                   # Position of the legend
+       legend = paste0(simple_labels, ": ", counts, " (", percentages, "%)"),  # Corrected legend text
+       fill = c("red", "blue", "lightgreen","purple","grey"),    # Colors matching the pie slices
+       title = "Archetypes")
+
+
+dev.off()
+
+
+
+
+
+###second code
+# Calculate counts and percentages for each archetype
+counts <- table(Data.soft$Extreme_Archetype_Number)
+percentages <- round(100 * counts / sum(counts), 1)
+
+# Define simple labels for archetypes
+simple_labels <- c("1", "2", "3", 
+                   "4", 
+                   "Mixed Etiology")
+
+# Combine labels with counts and percentages
+labels <- paste0(simple_labels, ": ", counts, " (", percentages, "%)")
+
+# Save the pie chart as a high-resolution PNG file
+pdf("Archetype_Distribution_PieChart44.pdf", width = 12, height = 10)
+
+# Create the pie chart with enhanced visibility
+pie(counts, 
+    labels = labels,                                   # Use detailed labels on the pie chart
+    col = c("red", "blue", "lightgreen", "purple","grey"), # Colors for each archetype
+    main = "Archetype Distribution")                  # Title of the pie chart
+
+# Add a legend to improve readability
+legend("bottomright",                                  
+       legend = labels,                                # Use detailed labels in the legend
+       fill = c("red", "blue", "lightgreen", "purple", "grey"), # Matching colors
+       title = "Archetypes",
+       cex = 0.8)                                      # Adjust text size for better readability
+
+# Close the PNG device to save the file
+dev.off()
+# Calculate counts and percentages for each archetype
+counts <- table(Data.soft$Extreme_Archetype_Number)
+percentages <- round(100 * counts / sum(counts), 1)
+
+# Define simple labels for archetypes
+simple_labels <- c("1", "2", "3", 
+                   "4", 
+                   "Mixed Etiology")
+
+# Combine labels with counts and percentages
+labels <- paste0(simple_labels, ": ", counts, " (", percentages, "%)")
+
+# Save the pie chart as a high-resolution PNG file
+pdf("Archetype_Distribution_PieChart4.pdf", width = 12, height = 10)
+# Create the pie chart with enhanced visibility
+pie(counts, 
+    labels = labels,                                   # Use detailed labels on the pie chart
+    col = c("red", "blue", "lightgreen", "purple", "grey"), # Colors for each archetype
+    main = "Archetype Distribution")                  # Title of the pie chart
+
+# Add a legend to improve readability
+legend("bottomright",                                  
+       legend = labels,                                # Use detailed labels in the legend
+       fill = c("red", "blue", "lightgreen", "purple", "grey"), # Matching colors
+       title = "Archetypes",
+       cex = 0.8)                                      # Adjust text size for better readability
+
+# Close the PNG device to save the file
+dev.off()
+
+
+```
+
+
+#Revised Pie chart code 
+```{r}
+#For saving figures
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+# Calculate counts and percentages for each archetype
+counts <- table(Data.soft$Extreme_Archetype_Number)
+percentages <- round(100 * counts / sum(counts), 1)
+
+# Define simple labels for archetypes (adjust if your data has different categories)
+simple_labels <- c("Archetype 1", "Archetype 2", "Archetype 3", "Archetype 4", "Mixed Etiology")
+
+# Combine labels with counts and percentages
+labels <- paste0(simple_labels, ": ", counts, " (", percentages, "%)")
+
+# Save the pie chart as a high-resolution PNG file
+png("Archetype_Distribution_PieChart_Final.png", width = 8, height = 6, units = "in", res = 600)
+
+# Create the pie chart
+pie(counts,
+    labels = labels,                                   # Detailed labels on the pie chart
+    col = c("red", "blue", "lightgreen", "purple", "grey"), # Colors for each archetype
+    main = "Archetype Distribution", cex = 1.2 #label size
+    )
+
+# Add a legend for clarity
+legend("bottomright",
+       legend = labels,
+       fill = c("red", "blue", "lightgreen", "purple", "grey"),
+       title = "Archetypes",
+       cex = 1,
+       text.font = 1,           # normal text
+       title.font = 2)
+
+# Close the PNG device to save the file
+dev.off()
+
+
+```
+
+
+
+#Baseline descriptive Characteristics for archetype (Unnormalised data.soft and then do the archetyping fpollwoing buy ccreating the table of statistics, thenafte u should derive the Sytandsrad devition using the dplyr package )
+```{r}
+Baseline_Characteristics <- multigrps(Data.soft, "Extreme_Archetype_Number", p.rd = 3,
+                                      varlist = c("u3talteru", "u3csex", "u3tgewi", "u3tgroe", "u3tbmi", 
+                                                  "u3tbmiwho", "u3twhrat", "u3twhratc", "u3tsysmm", 
+                                                  "u3tdiamm", "u3twhoish", "u3tglukfastn", 
+                                                  "u3tgluk2n", "u3tdm110y15", "u3tinsfastn", 
+                                                  "u3tins2n", "u3tmsidfup", "u3tquickin",  
+                                                  "u3lk_choln", "u3lk_hdln", "u3lk_ldln", 
+                                                  "u3lk_trin", "u3lk_krean", "u3l_hbavn", 
+                                                  "u3h_crp", "u3thoma2_ir","u3thoma2_s", "u3thoma2_b"), skewvar= c("u3talteru","u3tgewi", "u3tgroe","u3tbmi","u3twhrat", "u3tsysmm", "u3tglukfastn", "u3tgluk2n", "u3tinsfastn", "u3tins2n", "u3tquickin", "u3lk_choln", "u3lk_hdln", "u3lk_ldln","u3lk_trin", "u3lk_krean", "u3l_hbavn", "u3h_crp", "u3thoma2_ir","u3thoma2_s", "u3thoma2_b"), norm.rd = 2, 
+                                      sk.rd = 2, tabNA = "no", cat.rd = 0, pnormtest = 0.001,
+                                      maxfactorlevels = 1000, 
+                                      minfactorlevels = 10, sim = TRUE, workspace = 5e+05,
+                                      ShowStatistic = F)
+
+print(Baseline_Characteristics)
+View(Baseline_Characteristics)
+
+library(dplyr)
+
+# Define numeric columns
+numeric_vars <- names(Filter(is.numeric, Data.soft))
+
+# Group and calculate standard deviation
+grouped_sd <- Data.soft %>%
+  group_by(Extreme_Archetype_Number) %>%
+  summarise(across(all_of(numeric_vars), sd, na.rm = TRUE))
+
+# View grouped SDs
+print(grouped_sd)
+
+
+View(grouped_sd)
+```
+
+
+
+##Correlation matrix 
+### Create a new data frame to hold the adjusted assignments for correlation
+#ncol should be changed accordingly 
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+# Ensure Extreme_Archetype_Number is treated as a character
+Data.soft$Extreme_Archetype_Number <- as.character(Data.soft$Extreme_Archetype_Number)
+
+adjusted_assignments <- data.frame(matrix(0, nrow = nrow(Data.soft), ncol = 5))
+colnames(adjusted_assignments) <- c("1","2","3","4","Mixed Etiology")
+
+# Fill the adjusted assignments based on Extreme Archetype Number
+for (i in 1:nrow(Data.soft)) {
+  if (!is.na(Data.soft$Extreme_Archetype_Number[i])) {
+    if (Data.soft$Extreme_Archetype_Number[i] == "Mixed Etiology") {
+      adjusted_assignments[i, 5] <- 1 # Mixed Etiology
+    } else {
+      archetype_index <- as.numeric(Data.soft$Extreme_Archetype_Number[i])
+      adjusted_assignments[i, archetype_index] <- 1 # Set corresponding archetype to 1
+    }
+  }
+}
+
+# Combine the original data with the adjusted assignments
+combined_data <- cbind(Data.soft[, c(1:28)], adjusted_assignments)
+
+# Calculate the correlation matrix including mixed etiology and original data
+correlation_matrix <- cor(Data.soft[, c(1:28)], adjusted_assignments)
+
+# Display structure of the correlation matrix
+str(correlation_matrix)
+
+
+# Plot correlation matrix using corrplot
+corrplot(correlation_matrix, tl.col = "black")
+corrplot(correlation_matrix, method = 'color', tl.col = "black")
+
+# Save as high-resolution PNG
+png("Corrplot_Adjusted-k4-new.png", width = 1200, height = 1000, res = 600)
+corrplot(correlation_matrix, 
+         #method = "color",  # Color-coded correlation
+         tl.col = "black",   # Keep labels black
+         tl.cex = 0.5,       # Reduce text size for readability
+         tl.srt = 45,        # Rotate text labels to prevent overlap
+         mar = c(2, 2, 2, 2), # Adjust margins for better spacing
+         cl.align.text = "l"
+)
+dev.off()
+
+
+# Save as high-resolution PNG
+png("Corrplot_Fixed-k4.png", width = 1800, height = 1500, res = 600)
+# Generate correlation plot with optimized settings
+corrplot(correlation_matrix, 
+         method = "color",       # Use color-coded correlation
+         tl.col = "black",       # Label color
+         tl.cex = 0.5,           # Slightly larger text for readability
+         tl.srt = 45,            # Rotate text labels diagonally
+         mar = c(5, 6, 4, 6),    # Increase right margin to fit legend
+         cl.ratio = 0.2,         # Reduce the width of the color legend
+         cl.align.text = "l",    # Align color legend text to the left
+         cl.cex = 0.5            # Reduce legend text size
+)
+dev.off()
+getwd()
+```
+
+#Correlation matrix of pairwise of the countinous variales 
+```{r}
+#For saving figures
+setwd(Sys.getenv("KORA_RUN_DIR"))
+# List of columns to exclude
+excluded_vars <- c("Age", "Gender", "Metabolic_Syndrome_IDF", "WHO_BMI_Category", 
+                   "WHR_Category", "Diabetes_WHO", "Hypertension")
+
+# Keep only numeric columns and remove excluded columns for clinical variables
+clinical_vars <- setdiff(colnames(Data.soft), excluded_vars)
+clinical_numeric_vars <- clinical_vars[sapply(Data.soft[, clinical_vars, drop=FALSE], is.numeric)]
+Data.clinical <- Data.soft[, clinical_numeric_vars, drop=FALSE]
+
+# Compute correlation matrix for only clinical variables vs archetypes
+correlation_matrix <- cor(Data.clinical, adjusted_assignments, use = "pairwise.complete.obs")
+
+# Function for significance testing for correlation matrix
+cor.mtest <- function(mat, conf.level = 0.95) {
+  mat <- as.matrix(mat)
+  n <- ncol(mat)
+  p.mat <- matrix(NA, n, n)
+  
+  for (i in 1:n) {
+    for (j in 1:n) {
+      if (i != j) {  # Avoid redundant diagonal computations
+        test <- cor.test(mat[, i], mat[, j], method = "pearson")
+        p.mat[i, j] <- test$p.value
+      }
+    }
+  }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  return(list(p = p.mat))
+}
+
+# compute p-values for correlation
+cor_test_results <- cor.mtest(correlation_matrix, conf.level = 0.95)
+
+# convert p-values into significance stars, handling NA values
+significance_matrix <- matrix(sapply(cor_test_results$p, function(p) {
+  if (is.na(p)) return("")
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}), nrow = nrow(correlation_matrix), ncol = ncol(correlation_matrix))
+
+# ensure dimensions match before plotting
+if (!all(dim(significance_matrix) == dim(correlation_matrix))) {
+  stop("Error: Dimensions of significance matrix do not match correlation matrix!")
+}
+pdf("Corrplot_Fixed-k4.pdf", width = 8, height = 8)
+library(corrplot)
+corrplot(correlation_matrix, 
+         method = "color",       
+         tl.col = "black",       
+         tl.cex = 1.2,         
+         tl.srt = 45,            
+         mar = c(5, 6, 4, 8),    # More space for the legend
+         cl.ratio = 0.4,         # Make the legend wider
+         cl.align.text = "l",    
+         cl.cex = 0.8,           # Make legend text larger
+         cl.length = 11,         # More ticks on the color bar
+         cl.lim = c(-1, 1)       # Ensure legend covers full correlation range
+)
+
+dev.off()
+```
+
+
+
+##Heatmap with two different colours using perason approach 
+
+```{r}
+#For saving figures
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+#compute correlation matrix for only clinical variables vs archetypes
+correlation_matrix <- cor(Data.soft[,1:28], adjusted_assignments, use = "pairwise.complete.obs")
+
+cor.mtest <- function(mat, conf.level = 0.95) {
+  mat <- as.matrix(mat)
+  n <- ncol(mat)
+  p.mat <- matrix(NA, n, n)
+  
+  for (i in 1:n) {
+    for (j in 1:n) {
+      if (i != j) {  # Avoid redundant diagonal computations
+        test <- cor.test(mat[, i], mat[, j], method = "pearson")
+        p.mat[i, j] <- test$p.value
+      }
+    }
+  }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  return(list(p = p.mat))
+}
+
+#compute p-values for correlation
+cor_test_results <- cor.mtest(correlation_matrix, conf.level = 0.95)
+
+#convert p-values into significance stars, handling NA values
+significance_matrix <- matrix(sapply(cor_test_results$p, function(p) {
+  if (is.na(p)) return("")  # Handle NA values gracefully
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}), nrow = nrow(correlation_matrix), ncol = ncol(correlation_matrix))
+
+#nsure dimensions match before plotting
+if (!all(dim(significance_matrix) == dim(correlation_matrix))) {
+  stop("Error: Dimensions of significance matrix do not match correlation matrix!")
+}
+
+# Save heatmap as JPEG
+jpeg("Heatmap_of_4_Archetypes.jpeg", width = 1800, height = 1000, res = 600)
+
+# Define color palette
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+# Create heatmap
+pheatmap(correlation_matrix, 
+         cluster_rows = TRUE,  
+         cluster_cols = FALSE,  
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         color = my_palette,
+         main = "Heatmap of Archetypes",
+         fontsize_row = 6,
+         fontsize_col = 8, #angle_col = 45,
+         angle_col = 0,
+         border_color = "grey70",
+         display_numbers = significance_matrix)
+
+# Close device to save file
+dev.off()
+
+
+#######
+# Save as JPEG with higher resolution and better label spacing
+jpeg("Heatmap_of_4_Archetypes.jpeg", width = 1800, height = 1000, res = 600)
+
+# Define color palette
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+# Function to compute p-values for correlation matrix
+cor.mtest <- function(mat, conf.level = 0.95) {
+  n <- ncol(mat)
+  p.mat <- matrix(NA, n, n)
+  colnames(p.mat) <- colnames(mat)
+  rownames(p.mat) <- rownames(mat)
+  
+  for (i in 1:(n - 1)) {
+    for (j in (i + 1):n) {
+      test <- cor.test(mat[, i], mat[, j], use = "pairwise.complete.obs")
+      p.mat[i, j] <- test$p.value
+      p.mat[j, i] <- test$p.value
+    }
+  }
+  return(list(p = p.mat))
+}
+
+# Compute p-values
+cor_test_results <- cor.mtest(combined_data)
+p_values <- cor_test_results$p  
+
+# Ensure p-value matrix dimensions match correlation matrix
+if (!all(dim(p_values) == dim(correlation_matrix))) {
+  stop("Error: Dimensions of p-value matrix do not match correlation matrix!")
+}
+
+###
+
+# Function to annotate statistical significance
+get_significance <- function(p) {
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}
+
+# Apply significance function to correlation p-values
+significance_matrix <- matrix(sapply(p_values, get_significance), 
+                              nrow = nrow(p_values), ncol = ncol(p_values))
+
+rownames(significance_matrix) <- rownames(correlation_matrix)
+colnames(significance_matrix) <- colnames(correlation_matrix)
+
+# Create heatmap with improved readability
+pheatmap((correlation_matrix), 
+         cluster_rows = TRUE,  
+         cluster_cols = FALSE,  
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         color = my_palette,
+         main = "Heatmap of Archetypes",
+         fontsize_row = 6,       # Reduce font size for better readability
+         fontsize_col = 8,       # Adjust column font size
+         angle_col = 0,         # Rotate column labels to prevent overlap
+         border_color = "grey70", # Add subtle border for clarity
+         display_numbers = significance_matrix
+)
+
+# Close the device to save the file
+dev.off()
+
+
+#or 
+#Another colour for heatmap
+jpeg("Heatmap_of_4_4_Archetypes.jpeg", width = 1200, height = 800, res = 600)
+
+pheatmap((correlation_matrix), 
+         cluster_rows = TRUE,  # Perform clustering on rows (samples)
+         cluster_cols = FALSE,  # Perform clustering on columns (metabolites)
+         scale = "row", # Scale rows for better visualization
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         main = "Heatmap of Archetypes",
+ # Adjust font size & margins for readability
+  fontsize_row = 8,          # Adjust row label font size
+  fontsize_col = 8,          # Adjust column label font size
+  angle_col = 45,             # Rotate column labels for better visibility
+  border_color = "grey70"     # Add subtle borders for clarity
+)
+dev.off()
+
+```
+```{r}
+# Load required library
+library(pheatmap)
+
+# Initialize matrices
+mw_p_values <- matrix(NA, nrow = 28, ncol = ncol(adjusted_assignments))
+median_diff_matrix <- matrix(NA, nrow = 28, ncol = ncol(adjusted_assignments))
+
+# Perform Mann-Whitney U test and calculate median difference (as effect direction)
+for (i in 1:28) {
+  for (j in 1:ncol(adjusted_assignments)) {
+    group1 <- Data.soft[adjusted_assignments[, j] == 1, i]
+    group2 <- Data.soft[adjusted_assignments[, j] == 0, i]
+    
+    if (length(group1) > 2 && length(group2) > 2) {
+      test_result <- wilcox.test(group1, group2, exact = FALSE)
+      mw_p_values[i, j] <- test_result$p.value
+      # Use median difference as direction
+      median_diff_matrix[i, j] <- median(group1, na.rm = TRUE) - median(group2, na.rm = TRUE)
+    }
+  }
+}
+
+# Adjust p-values for multiple comparisons (FDR)
+p_values_adjusted <- matrix(p.adjust(mw_p_values, method = "fdr"), 
+                            nrow = nrow(mw_p_values), 
+                            ncol = ncol(mw_p_values))
+
+# Convert adjusted p-values to significance stars
+significance_matrix <- matrix(sapply(p_values_adjusted, function(p) {
+  if (is.na(p)) return("")
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}), nrow = nrow(mw_p_values), ncol = ncol(mw_p_values))
+
+# Assign row and column names
+rownames(median_diff_matrix) <- rownames(significance_matrix) <- colnames(Data.soft[, 1:28])
+colnames(median_diff_matrix) <- colnames(significance_matrix) <- colnames(adjusted_assignments)
+
+# Scale for heatmap visualization
+scaled_medians <- scale(median_diff_matrix)
+
+# Define heatmap color palette
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+# Save heatmap
+jpeg("Heatmap_MedianDiff_Archetypes.jpeg", width = 1800, height = 1000, res = 300)
+
+pheatmap(scaled_medians, 
+         cluster_rows = TRUE,
+         cluster_cols = FALSE,
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         color = my_palette,
+         main = "Heatmap of Archetypes",
+         fontsize_row = 6,
+         fontsize_col = 8,
+         angle_col = "0",
+         border_color = "grey70",
+         display_numbers = significance_matrix)
+
+dev.off()
+
+```
+```{r}
+#For saving figures
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+# Load required library
+library(pheatmap)
+# Rename columns using dplyr
+Data.soft <- Data.soft %>%
+  dplyr::rename(
+    Age = u3talteru, 
+    Gender = u3csex, 
+    Weight = u3tgewi, 
+    Height = u3tgroe, 
+    BMI = u3tbmi,
+    WHO_BMI_Category = u3tbmiwho,  
+    WHR = u3twhrat,  
+    WHR_Category = u3twhratc, 
+    SBP = u3tsysmm, 
+    DBP = u3tdiamm, 
+    Hypertension = u3twhoish,  
+    Fasting_glucose = u3tglukfastn,  
+    Glucose_2h = u3tgluk2n,  
+    Diabetes_WHO = u3tdm110y15,  
+    Fasting_serum_insulin = u3tinsfastn,  
+    Insulin_2h = u3tins2n,  
+    Metabolic_Syndrome_IDF = u3tmsidfup,  
+    HOMA_Beta = u3thoma2_b,  
+    HOMA_Sensitivity = u3thoma2_s,  
+    HOMA_IR = u3thoma2_ir,  
+    Insulin_Sensitivity_Quicki = u3tquickin,
+    Cholesterol = u3lk_choln,  
+    HDL = u3lk_hdln, 
+    LDL = u3lk_ldln,  
+    TG = u3lk_trin, 
+    Creatinine = u3lk_krean, 
+    HbA1c = u3l_hbavn,   
+    hsCRP = u3h_crp
+  )
+#For saving figures
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+# Define variables to exclude
+excluded_vars <- c("Age", "Gender", "Metabolic_Syndrome_IDF", "WHO_BMI_Category", "WHR_Category", "Diabetes_WHO", "Hypertension")
+
+# Select variables to include for the heatmap (excluding the specified ones)
+included_data_soft <- Data.soft[, !(colnames(Data.soft) %in% excluded_vars)]
+
+# Only keep numeric columns to avoid errors in wilcox.test
+included_data_soft <- included_data_soft[, sapply(included_data_soft, is.numeric)]
+
+# Update the number of rows for matrices based on the included variables
+num_included_vars <- ncol(included_data_soft)
+
+
+# Ensure Extreme_Archetype_Number is treated as a character
+Data.soft$Extreme_Archetype_Number <- as.character(Data.soft$Extreme_Archetype_Number)
+
+adjusted_assignments <- data.frame(matrix(0, nrow = nrow(Data.soft), ncol = 5))
+colnames(adjusted_assignments) <- c("1","2","3","4","Mixed Etiology")
+
+# Fill the adjusted assignments based on Extreme Archetype Number
+for (i in 1:nrow(Data.soft)) {
+  if (!is.na(Data.soft$Extreme_Archetype_Number[i])) {
+    if (Data.soft$Extreme_Archetype_Number[i] == "Mixed Etiology") {
+      adjusted_assignments[i, 5] <- 1 # Mixed Etiology
+    } else {
+      archetype_index <- as.numeric(Data.soft$Extreme_Archetype_Number[i])
+      adjusted_assignments[i, archetype_index] <- 1 # Set corresponding archetype to 1
+    }
+  }
+}
+
+
+# Initialize matrices with the correct dimensions
+mw_p_values <- matrix(NA, nrow = num_included_vars, ncol = ncol(adjusted_assignments))
+median_diff_matrix <- matrix(NA, nrow = num_included_vars, ncol = ncol(adjusted_assignments))
+
+# Perform Mann-Whitney U test and calculate median difference (as effect direction)
+for (i in 1:num_included_vars) { # Loop through the included variables
+  for (j in 1:ncol(adjusted_assignments)) {
+    group1 <- included_data_soft[adjusted_assignments[, j] == 1, i]
+    group2 <- included_data_soft[adjusted_assignments[, j] == 0, i]
+
+    if (length(group1) > 2 && length(group2) > 2) {
+      test_result <- wilcox.test(group1, group2, exact = FALSE)
+      mw_p_values[i, j] <- test_result$p.value
+      # Use median difference as direction
+      median_diff_matrix[i, j] <- median(group1, na.rm = TRUE) - median(group2, na.rm = TRUE)
+    }
+  }
+}
+
+# Adjust p-values for multiple comparisons (FDR)
+p_values_adjusted <- matrix(p.adjust(mw_p_values, method = "fdr"),
+                            nrow = nrow(mw_p_values),
+                            ncol = ncol(mw_p_values))
+
+# Convert adjusted p-values to significance stars
+significance_matrix <- matrix(sapply(p_values_adjusted, function(p) {
+  if (is.na(p)) return("")
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}), nrow = nrow(mw_p_values), ncol = ncol(mw_p_values))
+
+# Assign row and column names
+rownames(median_diff_matrix) <- rownames(significance_matrix) <- colnames(included_data_soft)
+colnames(median_diff_matrix) <- colnames(significance_matrix) <- colnames(adjusted_assignments)
+
+# Scale for heatmap visualization
+scaled_medians <- scale(median_diff_matrix)
+
+# Define heatmap color palette
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+# Save heatmap
+png("Heatmap_MedianDiff_Archetype1.png", width = 10, height = 6, units = "in", res = 600)
+
+pheatmap(scaled_medians,
+         cluster_rows = TRUE,
+         cluster_cols = FALSE,
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         color = my_palette,
+         main = "Heatmap of Archetypes",
+         fontsize_row = 15,
+         fontsize_col = 15,
+         angle_col = "0",
+         border_color = "grey70",
+         display_numbers = significance_matrix)
+
+dev.off()
+
+```
+```{r}
+#compute correlation matrix for only clinical variables vs archetypes
+correlation_matrix <- cor(Data.soft[,1:28], adjusted_assignments, use = "pairwise.complete.obs")
+
+cor.mtest <- function(mat, conf.level = 0.95) {
+  mat <- as.matrix(mat)
+  n <- ncol(mat)
+  p.mat <- matrix(NA, n, n)
+  
+  for (i in 1:n) {
+    for (j in 1:n) {
+      if (i != j) {  # Avoid redundant diagonal computations
+        test <- cor.test(mat[, i], mat[, j], method = "pearson")
+        p.mat[i, j] <- test$p.value
+      }
+    }
+  }
+  colnames(p.mat) <- rownames(p.mat) <- colnames(mat)
+  return(list(p = p.mat))
+}
+
+#compute p-values for correlation
+cor_test_results <- cor.mtest(correlation_matrix, conf.level = 0.95)
+
+#convert p-values into significance stars, handling NA values
+significance_matrix <- matrix(sapply(cor_test_results$p, function(p) {
+  if (is.na(p)) return("")  # Handle NA values gracefully
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}), nrow = nrow(correlation_matrix), ncol = ncol(correlation_matrix))
+
+#nsure dimensions match before plotting
+if (!all(dim(significance_matrix) == dim(correlation_matrix))) {
+  stop("Error: Dimensions of significance matrix do not match correlation matrix!")
+}
+
+# Save heatmap as JPEG
+jpeg("Heatmap_of_6_Archetypes_Pearson.jpeg", width = 1800, height = 1000, res = 300)
+
+# Define color palette
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+# Create heatmap
+pheatmap(correlation_matrix, 
+         cluster_rows = TRUE,  
+         cluster_cols = FALSE,  
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         color = my_palette,
+         main = "Heatmap of Archetypes",
+         fontsize_row = 6,
+         fontsize_col = 8, #angle_col = 45,
+         angle_col = 0,
+         border_color = "grey70",
+         display_numbers = significance_matrix)
+
+# Close device to save file
+dev.off()
+
+
+```
+```{r}
+mw_p_values <- matrix(NA, nrow = 28, ncol = ncol(adjusted_assignments))
+mw_test_estimates <- matrix(NA, nrow = 28, ncol = ncol(adjusted_assignments))
+
+# Perform Mann-Whitney U test for each clinical variable vs. each archetype group
+for (i in 1:28) {
+  for (j in 1:ncol(adjusted_assignments)) {
+    group1 <- Data.soft[adjusted_assignments[, j] == 1, i]  # Selected archetype group
+    group2 <- Data.soft[adjusted_assignments[, j] == 0, i]  # Remaining individuals
+    
+    if (length(group1) > 2 && length(group2) > 2) {  # Ensure enough data points
+      test_result <- wilcox.test(group1, group2, exact = FALSE)  # Mann-Whitney U test
+      mw_p_values[i, j] <- test_result$p.value
+      mw_test_estimates[i, j] <- median(group1, na.rm = TRUE) - median(group2, na.rm = TRUE)  # Directionality
+    }
+  }
+}
+
+# Adjust p-values for multiple comparisons
+p_values_adjusted <- matrix(p.adjust(mw_p_values, method = "fdr"), nrow = nrow(mw_p_values), ncol = ncol(mw_p_values))
+
+# Convert p-values into significance stars
+significance_matrix <- matrix(sapply(p_values_adjusted, function(p) {
+  if (is.na(p)) return("")  
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}), nrow = nrow(mw_p_values), ncol = ncol(mw_p_values))
+
+rownames(scaled_estimates) <- rownames(mw_test_estimates) <- colnames(Data.soft[, 1:28])  # Clinical variable names
+colnames(scaled_estimates) <- colnames(mw_test_estimates) <- colnames(adjusted_assignments)  # Archetype group names
+rownames(significance_matrix) <- rownames(mw_test_estimates)
+colnames(significance_matrix) <- colnames(mw_test_estimates)
+
+
+# Scale test estimates for visualization (keeping directionality)
+scaled_estimates <- scale(mw_test_estimates)
+
+# Define heatmap color palette (red = higher, blue = lower)
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+# Save heatmap as JPEG
+jpeg("Heatmap_of_6_Archetypes_Mann-whitey.jpeg", width = 1800, height = 1000, res = 300)
+
+# Create heatmap
+pheatmap(scaled_estimates, 
+         cluster_rows = TRUE,  
+         cluster_cols = FALSE,  
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         color = my_palette,
+         main = "Heatmap of Clinical Variables vs Archetypes",
+         fontsize_row = 6,
+         fontsize_col = 8,
+         angle_col = 0,
+         border_color = "grey70",
+         display_numbers = significance_matrix)
+
+# Close graphics device
+dev.off()
+
+```
+
+
+#Sensitivity Analysis (excluded from the analysis)
+```{r}
+Data_male <- Data.soft[Data.soft$u3csex == 1, ]
+Data_female <- Data.soft[Data.soft$u3csex == 2, ]
+
+adjusted_assignments_male <- adjusted_assignments[Data.soft$u3csex == 1, , drop = FALSE] #drop = FALSE important to preserve the dataframe/matrix structure even with one column
+adjusted_assignments_female <- adjusted_assignments[Data.soft$u3csex == 2, , drop = FALSE]
+
+# Check number of rows to confirm the process
+print(paste("Number of males:", nrow(Data_male)))
+print(paste("Number of females:", nrow(Data_female)))
+print(paste("Number of male assignments:", nrow(adjusted_assignments_male)))
+print(paste("Number of female assignments:", nrow(adjusted_assignments_female)))
+
+
+#Check if the rownumbers of Data_male and adjusted_assignments_male match
+print(head(rownames(Data_male)))
+print(head(rownames(adjusted_assignments_male)))
+# Identify columns to exclude (ensure these names are EXACTLY correct!)
+cols_to_exclude <- c("u3csex", "Extreme_Archetype_Number")
+
+# Identify numeric columns
+numeric_cols <- sapply(Data_male, is.numeric)
+
+# Select numeric columns *excluding* the exclusion columns. If numeric_cols is of type logical, you can't take the names
+Data_male_numeric <- Data_male[, numeric_cols & !(colnames(Data_male) %in% cols_to_exclude)]
+
+#Convert to matrix
+Data_male <- data.matrix(Data_male_numeric)
+Data_female <- data.matrix(Data_female[, numeric_cols & !(colnames(Data_female) %in% cols_to_exclude)])  # Apply same to female
+# Check the variance of each column
+variances <- apply(Data_male, 2, var, na.rm = TRUE) # Calculate variances, handling NAs
+
+# Identify valid columns (non-zero variance)
+valid_cols <- variances > 0
+
+# Filter the data, including only the valid columns
+Data_male_filtered <- Data_male[, valid_cols, drop = FALSE] #drop = FALSE important to preserve the matrix structure even with one column
+
+# Check
+print(paste("Number of valid columns (male):", ncol(Data_male_filtered)))
+
+# Check for NAs in adjusted_assignments_male and handle them
+if(any(is.na(adjusted_assignments_male))){
+  print("NAs found in adjusted_assignments_male. Imputing with mean.")
+  adjusted_assignments_male[is.na(adjusted_assignments_male)] <- mean(adjusted_assignments_male, na.rm=TRUE) # Simple imputation
+}
+# Check if Data_male_filtered or adjusted_assignments_male are empty
+if(ncol(Data_male_filtered) > 0 && ncol(adjusted_assignments_male) > 0) {
+  correlation_matrix_male <- cor(Data_male_filtered, adjusted_assignments_male, method = "pearson", use = "pairwise.complete.obs") # Handle NAs
+
+} else {
+  print("Warning: Data_male_filtered or adjusted_assignments_male is empty. Skipping correlation calculation.")
+  correlation_matrix_male <- NULL # Or assign a default value
+
+}
+
+# Repeat similar steps for Data_female (omitted for brevity, but VERY important)
+# ...
+
+# Filter zero-variance columns for female, similar to male
+variances_female <- apply(Data_female, 2, var, na.rm = TRUE)
+valid_cols_female <- variances_female > 0
+Data_female_filtered <- Data_female[, valid_cols_female, drop = FALSE]
+
+if(any(is.na(adjusted_assignments_female))){
+  print("NAs found in adjusted_assignments_female. Imputing with mean.")
+  adjusted_assignments_female[is.na(adjusted_assignments_female)] <- mean(adjusted_assignments_female, na.rm=TRUE) # Simple imputation
+}
+
+if(ncol(Data_female_filtered) > 0 && ncol(adjusted_assignments_female) > 0) {
+
+  correlation_matrix_female <- cor(Data_female_filtered, adjusted_assignments_female, method = "pearson", use = "pairwise.complete.obs")
+
+} else {
+  print("Warning: Data_female_filtered or adjusted_assignments_female is empty. Skipping correlation calculation.")
+  correlation_matrix_female <- NULL
+}
+if (!is.null(correlation_matrix_male)) {
+  corrplot(correlation_matrix_male, tl.col = "black")
+  corrplot(correlation_matrix_male, method = 'color', tl.col = "black")
+}
+
+if (!is.null(correlation_matrix_female)) {
+  corrplot(correlation_matrix_female, tl.col = "black")
+  corrplot(correlation_matrix_female, method = 'color', tl.col = "black")
+}
+
+pheatmap((correlation_matrix_female), 
+         cluster_rows = TRUE,  # Perform clustering on rows (samples)
+         cluster_cols = FALSE,  # Perform clustering on columns (metabolites)
+         scale = "row", # Scale rows for better visualization
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         main = "Female Heatmap of Archetypes")
+
+
+pheatmap((correlation_matrix_male), 
+         cluster_rows = TRUE,  # Perform clustering on rows (samples)
+         cluster_cols = FALSE,  # Perform clustering on columns (metabolites)
+         scale = "row", # Scale rows for better visualization
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         main = "Male Heatmap of Archetypes")
+getwd()
+
+```
+```{r}
+#compute correlation matrix for only clinical variables vs archetypes
+correlation_matrix <- cor(Data.soft[,1:28], adjusted_assignments, use = "pairwise.complete.obs")
+
+
+#convert p-values into significance stars, handling NA values
+significance_matrix <- matrix(sapply(cor_test_results$p, function(p) {
+  if (is.na(p)) return("")  # Handle NA values gracefully
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}), nrow = nrow(correlation_matrix), ncol = ncol(correlation_matrix))
+
+#nsure dimensions match before plotting
+if (!all(dim(significance_matrix) == dim(correlation_matrix))) {
+  stop("Error: Dimensions of significance matrix do not match correlation matrix!")
+}
+
+# Save heatmap as JPEG
+jpeg("Heatmap_of_4_Archetypes.jpeg", width = 1800, height = 1000, res = 300)
+
+# Define color palette
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+# Create heatmap
+pheatmap(correlation_matrix, 
+         cluster_rows = TRUE,  
+         cluster_cols = FALSE,  
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         color = my_palette,
+         main = "Heatmap of Archetypes",
+         fontsize_row = 6,
+         fontsize_col = 8, #angle_col = 45,
+         angle_col = 0,
+         border_color = "grey70",
+         display_numbers = significance_matrix)
+
+# Close device to save file
+dev.off()
+
+```
+
+
+
+##Sankey Diagram (used)
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+#library(dplyr)
+
+##Making a new dataframe of data.soft
+Data.soft1 <- data.frame(Data.soft[,c("u3tmsidfup","u3csex","Extreme_Archetype_Number")])
+
+
+#Renaming the coloums using dplyr
+# Rename using pipe
+Data.soft1 <- Data.soft1 %>%
+  dplyr::rename(
+    "Metabolic syndrome status (IDF)" = u3tmsidfup,
+    "Gender" = u3csex,
+    "Archetypes" = Extreme_Archetype_Number
+  )
+
+#Creating the factor variables foe better visulaistaion for desired variables
+Data.soft1$Gender <- factor(Data.soft1$Gender, levels = c(1,2),
+                            labels = c("Male", "Female"))
+Data.soft1$`Metabolic syndrome status (IDF)` <- factor(Data.soft1$`Metabolic syndrome status (IDF)`,
+                                                       levels = c(1,2), 
+                                                       labels = c("MetS", "Controls"))
+
+
+#changing the format of dataframe
+df <- Data.soft1%>%
+  make_long('Metabolic syndrome status (IDF)', 
+            'Gender', 
+            'Archetypes')
+
+pl <- ggplot(df, aes(x = x,                        
+                     next_x = next_x,                                     
+                     node = node,
+                     next_node = next_node,        
+                     fill = factor(node),
+                     label = node))             # This Creates a label for each node
+
+pl <- pl +geom_sankey(flow.alpha = 0.5,          #This Creates the transparency of your node 
+                      node.color = "black",     # This is your node color        
+                      show.legend = TRUE)        # This determines if you want your legend to show
+
+pl <- pl + geom_sankey_label(size = 5, 
+                             color = "black", 
+                             fill = "white") # This specifies the Label format for each node 
+
+
+pl <- pl + scale_fill_manual(
+  values = c(
+    'Controls' ="#00BA38",          # Red-pink (left)
+    'MetS' = "#F8766D",              # Green (Metabolic Syndrome)
+    'Male' = "#A3A500",              # Olive/greenish brown
+    'Female' = "#E38900",            # Orange
+    'Mixed Etiology' = "#F564E3",    # Pink (far right)
+    '1' = "#00BFC4",                 # Cyan (Archetype 1)
+    '2' = "#00C19F",                 # Teal (Archetype 2)
+    '3' = "#619CFF",                 # Light blue (Archetype 3)
+    '4' = "#DB72FB"                  # Purple (Archetype 4)
+  ))
+
+pl <- pl + labs(fill = "Category")  # Change legend title from 'factor(node)' to 'Category'
+
+
+pl <- pl + theme_void() + 
+  theme(legend.position = "right")
+pl
+
+ggsave("1ewest_sankey_metabolic_syndrome.png", pl, width = 8, height = 6, dpi = 600, bg = "white")
+ggsave("1ewest_sankey_metabolic_syndrome.pdf", pl, width = 12, height = 7, dpi = 600, bg = "white")
+
+```
+
+
+```{r}
+write.csv(Data.soft, file = "data_soft_sankey.csv", row.names = FALSE)
+
+```
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+#library(ggalluvial)
+#library(dplyr)
+
+# Ensure factors are correctly defined
+Data.soft <- Data.soft %>%
+  filter(!is.na(u3tmsidfup) & !is.na(Extreme_Archetype_Number))  # Remove missing values
+
+Data.soft$Extreme_Archetype_Number <- as.factor(Data.soft$Extreme_Archetype_Number)
+Data.soft$u3tmsidfup <- factor(Data.soft$u3tmsidfup, levels = c(1,2), labels = c("Metabolic Syndrome", "Controls"))
+
+# Check levels to ensure they are properly defined
+print(levels(Data.soft$u3tmsidfup))
+print(levels(Data.soft$Extreme_Archetype_Number))
+
+# Create Sankey Diagram
+p <- ggplot(Data.soft, aes(axis1 = u3tmsidfup, axis2 = Extreme_Archetype_Number, y = after_stat(count))) +
+  
+  # Draw the alluvium flows
+  geom_alluvium(aes(fill = interaction(u3tmsidfup, Extreme_Archetype_Number)), 
+                alpha = 0.8, width = 1/3) +
+  
+  # Create category blocks
+  geom_stratum(width = 1/3, aes(fill = u3tmsidfup), color = "black", alpha = 0.9) +
+  
+  # Improve axis labels
+  scale_x_discrete(limits = c("Metabolic Syndrome Status(IDF)", "Archetypes"), expand = c(.2, .05)) +
+  labs(x = "Category", y = "Count", fill = "Archetype and IDF Combination") +
+  
+  
+  # Adjust colors for better differentiation
+  scale_fill_brewer(palette = "Set1")
+  
+
+  # Custom theme for readability
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(size = 12, face = "bold"),
+    plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+    legend.position = "right"
+  ) +
+  
+  # Add title
+  ggtitle("Sankey Diagram Stratified by Metabolic syndrome and Archetypes")
+
+print(p)
+ggsave("k4-sankey_metabolic_syndrome.pdf", p, width = 12, height = 7, bg = "white")
+dev.off()
+```
+```{r}
+#compute correlation matrix for only clinical variables vs archetypes
+correlation_matrix <- cor(Data.soft[,1:28], adjusted_assignments, use = "pairwise.complete.obs")
+
+#compute p-values for correlation
+cor_test_results <- cor.mtest(correlation_matrix, conf.level = 0.95)
+
+#convert p-values into significance stars, handling NA values
+significance_matrix <- matrix(sapply(cor_test_results$p, function(p) {
+  if (is.na(p)) return("")  # Handle NA values gracefully
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}), nrow = nrow(correlation_matrix), ncol = ncol(correlation_matrix))
+
+#nsure dimensions match before plotting
+if (!all(dim(significance_matrix) == dim(correlation_matrix))) {
+  stop("Error: Dimensions of significance matrix do not match correlation matrix!")
+}
+
+# Save heatmap as JPEG
+jpeg("Heatmap_of_2_Archetypes.jpeg", width = 1800, height = 1000, res = 300)
+
+# Define color palette
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+# Create heatmap
+pheatmap(correlation_matrix, 
+         cluster_rows = TRUE,  
+         cluster_cols = FALSE,  
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         color = my_palette,
+         main = "Heatmap of Archetypes",
+         fontsize_row = 6,
+         fontsize_col = 8, #angle_col = 45,
+         angle_col = 0,
+         border_color = "grey70",
+         display_numbers = significance_matrix)
+
+# Close device to save file
+dev.off()
+
+```
+
+
+
+
+###Diving into mixed Etiology 
+
+```{r}
+# Subset alphas for mixed etiology individuals
+mixed_scores <- bestModel(a4)$alphas[mixed_etiology,]
+
+# Identify the highest and second highest archetype memberships
+archetype_labels <- c("1", "2", "3", "4")
+highest_archetypes <- apply(mixed_scores, 1, function(x) order(x, decreasing = TRUE)[1])
+second_highest_archetypes <- apply(mixed_scores, 1, function(x) order(x, decreasing = TRUE)[2])
+
+highest_labels <- archetype_labels[highest_archetypes]
+second_highest_labels <- archetype_labels[second_highest_archetypes]
+
+# Combine primary and secondary archetypes into a group
+mixed_groups <- paste0(highest_labels, ",", second_highest_labels)
+Data.soft$Mixed_Group <- NA
+Data.soft$Mixed_Group[mixed_etiology] <- mixed_groups
+
+# Create a data frame to hold the results
+mixed <- data.frame(
+  Participant = mixed_etiology,
+  Highest_Archetype = highest_archetypes,
+  Second_Highest_Archetype = second_highest_archetypes
+)
+
+mixed
+mixed_scores
+single_dominating <- apply(mixed_scores, 1, function(x) sum(x >= 0.4) == 1)
+two_dominating <- apply(mixed_scores, 1, function(x) sum(x >= 0.4) == 2)
+no_dominating <- apply(mixed_scores, 1, function(x) all(x < 0.4))
+
+# Count participants in each category
+count_single_dominating <- sum(single_dominating)
+count_two_dominating <- sum(two_dominating)
+count_no_dominating <- sum(no_dominating)
+
+print(count_single_dominating)
+print(count_two_dominating)
+print(count_no_dominating)
+mixed_groups <- paste0(highest_labels, second_highest_labels)
+table(mixed_groups)
+Data.soft$Mixed_Group <- NA
+Data.soft$Mixed_Group[mixed_etiology] <- mixed_groups
+```
+
+#Creating Heatmap of Mixed Etiology using the Linear regression
+```{r}
+#Defining  the clinical variables for analysis
+clinical_vars <- c("u3talteru", "u3csex", "u3tgewi", "u3tgroe", "u3tbmi", 
+                                                  "u3tbmiwho", "u3twhrat", "u3twhratc", "u3tsysmm", 
+                                                  "u3tdiamm", "u3twhoish", "u3tglukfastn", 
+                                                  "u3tgluk2n", "u3tdm110y15", "u3tinsfastn", 
+                                                  "u3tins2n", "u3tmsidfup", "u3tquickin",  
+                                                  "u3lk_choln", "u3lk_hdln", "u3lk_ldln", 
+                                                  "u3lk_trin", "u3lk_krean", "u3l_hbavn", 
+                                                  "u3h_crp", "u3thoma2_ir","u3thoma2_s", "u3thoma2_b")
+
+
+Data.soft$Mixed_Group <- NA
+Data.soft$Mixed_Group[mixed_etiology] <- mixed_groups
+
+#  Initialize matrices to store test estimates and p-values
+test_estimates <- matrix(NA, nrow = length(clinical_vars), ncol = length(unique(mixed_groups)))
+p_values <- matrix(NA, nrow = length(clinical_vars), ncol = length(unique(mixed_groups)))
+
+rownames(test_estimates) <- clinical_vars
+colnames(test_estimates) <- unique(mixed_groups)
+rownames(p_values) <- clinical_vars
+colnames(p_values) <- unique(mixed_groups)
+for (group in unique(mixed_groups)) {
+  group_indices <- which(Data.soft$Mixed_Group == group)
+  
+  for (var in clinical_vars) {
+    if (!is.null(group_indices) && length(group_indices) > 0) {
+      Data.soft$group_member <- ifelse(Data.soft$Mixed_Group == group, 1, 0)
+      
+      # Run linear regression (considering the clinical variable as continuous)
+      model <- lm(Data.soft[[var]] ~ Data.soft$group_member)
+      test_estimates[var, group] <- coef(model)[2]  # Coefficient for group membership
+      p_values[var, group] <- summary(model)$coefficients[2, 4]  # p-value
+    }
+  }
+}
+get_significance <- function(p) {
+  if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}
+
+# Apply the significance function to p-values
+significance <- matrix(sapply(p_values, get_significance), nrow = nrow(p_values))
+rownames(significance) <- rownames(test_estimates)
+colnames(significance) <- colnames(test_estimates)
+
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+pheatmap((test_estimates), 
+         cluster_rows = FALSE,  # Perform clustering on rows (samples)
+         cluster_cols = FALSE,  # Perform clustering on columns (metabolites)
+         scale = "row", # Scale rows for better visualization
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         display_numbers = significance, 
+         color = my_palette,
+         angle_col = 0,#0 for horizontal, 45 for rotation andfor vertical 90
+         main = "Heatmap of Clinical Associations Across Mixed Etiology Groups")
+
+```
+
+
+##Creating Heatmap of Mixed Etiology using the Mann whiteny u test  (not used in paper)
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+# Load required library
+library(pheatmap)
+clinical_vars <- c("u3talteru", "u3csex", "u3tgewi", "u3tgroe", "u3tbmi", 
+                   "u3tbmiwho", "u3twhrat", "u3twhratc", "u3tsysmm", "u3tdiamm", 
+                   "u3twhoish", "u3tglukfastn", "u3tgluk2n", "u3tdm110y15", 
+                   "u3tinsfastn", "u3tins2n", "u3tmsidfup", "u3tquickin",  
+                   "u3lk_choln", "u3lk_hdln", "u3lk_ldln", "u3lk_trin", 
+                   "u3lk_krean", "u3l_hbavn", "u3h_crp", "u3thoma2_ir", 
+                   "u3thoma2_s", "u3thoma2_b")
+
+pretty_names <- c(
+  "Age", "Gender", "Weight", "Height", "BMI", 
+  "WHO_BMI_Category", "WHR", "WHR_Category", "SBP", "DBP",
+  "Hypertension", "Fasting_glucose", "Glucose_2h", "Diabetes_WHO", 
+  "Fasting_serum_insulin", "Insulin_2h", "Metabolic_Syndrome_IDF", "Insulin_Sensitivity_Quicki",
+  "Cholesterol", "HDL", "LDL", "TG", "Creatinine", "HbA1c", "hsCRP", 
+  "HOMA_IR", "HOMA_Sensitivity", "HOMA_Beta"
+)
+Data.soft$Mixed_Group <- NA
+Data.soft$Mixed_Group[mixed_etiology] <- mixed_groups
+test_estimates <- matrix(NA, nrow = length(clinical_vars), ncol = length(unique(mixed_groups)))
+p_values <- matrix(NA, nrow = length(clinical_vars), ncol = length(unique(mixed_groups)))
+
+rownames(test_estimates) <- clinical_vars
+colnames(test_estimates) <- unique(mixed_groups)
+rownames(p_values) <- clinical_vars
+colnames(p_values) <- unique(mixed_groups)
+for (group in unique(mixed_groups)) {
+  group_indices <- which(Data.soft$Mixed_Group == group)
+  
+  for (var in clinical_vars) {
+    if (!is.null(group_indices) && length(group_indices) > 0) {
+      group1 <- Data.soft[[var]][Data.soft$Mixed_Group == group]
+      group2 <- Data.soft[[var]][Data.soft$Mixed_Group != group & !is.na(Data.soft$Mixed_Group)]
+      
+      # Only test if both groups have enough participants
+      if (length(group1) > 2 && length(group2) > 2) {
+        test_result <- wilcox.test(group1, group2, exact = FALSE)
+        
+        p_values[var, group] <- test_result$p.value
+        test_estimates[var, group] <- median(group1, na.rm = TRUE) - median(group2, na.rm = TRUE)
+      }
+    }
+  }
+}
+get_significance <- function(p) {
+  if (is.na(p)) return("")
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}
+
+significance <- matrix(sapply(p_values, get_significance), nrow = nrow(p_values))
+rownames(test_estimates) <- pretty_names
+rownames(significance) <- pretty_names
+
+# Save heatmap as JPEG
+png("Heatmap_of_4_mixed etiology.fixed.png", width = 8, height = 6, units = "in", res = 600, bg = "white")
+# Set matrix name to customize the color legend title
+attr(test_estimates, "matrix_name") <- "Estimate"
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+pheatmap(test_estimates, 
+         cluster_rows = TRUE,
+         cluster_cols = FALSE,
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         display_numbers = significance,
+         color = my_palette,
+         angle_col = "0",
+         fontsize_row = 13,
+         fontsize_col = 13,
+         main = "Heatmap of Clinical Associations Across Mixed Etiology Groups")
+
+dev.off()
+
+```
+
+
+#Revised mixed etiology only for clinical variables (using the Mann whiteny u test  (used this for publication)
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+##Creating Heatmap of Mixed Etiology using the Mann whiteny u test 
+# Load required library
+library(pheatmap)
+clinical_vars <- c("u3talteru", "u3tgewi", "u3tgroe", "u3tbmi", 
+                   "u3twhrat", "u3tsysmm", "u3tdiamm", 
+                   "u3tglukfastn", "u3tgluk2n", 
+                   "u3tinsfastn", "u3tins2n", "u3tquickin",  
+                   "u3lk_choln", "u3lk_hdln", "u3lk_ldln", "u3lk_trin", 
+                   "u3lk_krean", "u3l_hbavn", "u3h_crp", "u3thoma2_ir", 
+                   "u3thoma2_s", "u3thoma2_b")
+
+pretty_names <- c(
+  "Age", "Weight", "Height", "BMI", 
+   "WHR",  "SBP", "DBP",
+   "Fasting_glucose", "Glucose_2h",  
+  "Fasting_serum_insulin", "Insulin_2h", "Insulin_Sensitivity_Quicki",
+  "Cholesterol", "HDL", "LDL", "TG", "Creatinine", "HbA1c", "hsCRP", 
+  "HOMA_IR", "HOMA_Sensitivity", "HOMA_Beta"
+)
+Data.soft$Mixed_Group <- NA
+Data.soft$Mixed_Group[mixed_etiology] <- mixed_groups
+test_estimates <- matrix(NA, nrow = length(clinical_vars), ncol = length(unique(mixed_groups)))
+p_values <- matrix(NA, nrow = length(clinical_vars), ncol = length(unique(mixed_groups)))
+
+rownames(test_estimates) <- clinical_vars
+colnames(test_estimates) <- unique(mixed_groups)
+rownames(p_values) <- clinical_vars
+colnames(p_values) <- unique(mixed_groups)
+for (group in unique(mixed_groups)) {
+  group_indices <- which(Data.soft$Mixed_Group == group)
+  
+  for (var in clinical_vars) {
+    if (!is.null(group_indices) && length(group_indices) > 0) {
+      group1 <- Data.soft[[var]][Data.soft$Mixed_Group == group]
+      group2 <- Data.soft[[var]][Data.soft$Mixed_Group != group & !is.na(Data.soft$Mixed_Group)]
+      
+      # Only test if both groups have enough participants
+      if (length(group1) > 2 && length(group2) > 2) {
+        test_result <- wilcox.test(group1, group2, exact = FALSE)
+        
+        p_values[var, group] <- test_result$p.value
+        test_estimates[var, group] <- median(group1, na.rm = TRUE) - median(group2, na.rm = TRUE)
+      }
+    }
+  }
+}
+get_significance <- function(p) {
+  if (is.na(p)) return("")
+  else if (p < 0.001) return("***")
+  else if (p < 0.01) return("**")
+  else if (p < 0.05) return("*")
+  else return("")
+}
+
+significance <- matrix(sapply(p_values, get_significance), nrow = nrow(p_values))
+rownames(test_estimates) <- pretty_names
+rownames(significance) <- pretty_names
+
+# Remove legend title
+attr(test_estimates, "name") <- ""          # works in recent pheatmap
+attr(test_estimates, "matrix_name") <- NULL # just in case you set it earlier
+
+png("Heatmap_of_4_mixed etiology.fixed.png", width = 10,height = 8, units = "in", res = 600)
+# Set matrix name to customize the color legend title
+attr(test_estimates, "matrix_name") <- "Estimate"
+my_palette <- colorRampPalette(c("blue", "white", "red"))(50)
+
+pheatmap(test_estimates, 
+         cluster_rows = TRUE,
+         cluster_cols = FALSE,
+         scale = "row",
+         show_rownames = TRUE,
+         show_colnames = TRUE,
+         display_numbers = significance,
+         color = my_palette,
+         angle_col = "0",
+         fontsize_row = 13,
+         fontsize_col = 13,
+         main = "Heatmap of Clinical Associations Across Mixed Etiology Groups")
+
+dev.off()
+
+```
+
+
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+```
+
+
+#Box plot to see the distribution of each variable in each archetype (not included)
+```{r}
+
+#BMI
+par(mfrow= c(2,3))
+
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tbmi", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "BMI", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tgewi", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Weight", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3twhrat", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Waist-Hip Ratio", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tins2n", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2","3", "4", "Mixed Etiology"),
+          ylab = "Waist-Hip Ratio", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tsysmm", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "systolic Blood Pressure", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tdiamm", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Diastolic Blood Pressure", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tglukfastn", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Fasting Glucose", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tgluk2n", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "2 hours Glucose", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tinsfastn", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Fasting serum insulin ", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tinsfastn", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Fasting serum insulin ", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3thoma2_b", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "HOMA-beta cell function", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3thoma2_s", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "HOMA insulin sensitivity", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3thoma2_ir", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "HOMA-insulin resistance", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tquickin", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "quantitative insulin sensitivity check index", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3lk_choln", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Total Cholestrol", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3lk_hdln", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "HDL", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3lk_ldln", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "LDL", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3lk_trin", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Fasting Triglyceride", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3lk_krean", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Creatinine", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3l_hbavn", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Fasting HbA1c value", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3h_crp", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "high sensitivity C-reactive protein", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3tgroe", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Height", xlab = "Archetype")
+ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = "u3talteru", 
+          color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+          order = c("1", "2", "Mixed Etiology"),
+          ylab = "Age at examination date", xlab = "Archetype")
+```
+
+#Creatin a list to at the same time plotting all the boxplots together
+```{r}
+
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+library(ggpubr)
+
+# Define variables and their corresponding y-axis labels
+boxplot_vars <- list(
+  "u3tbmi" = "BMI",
+  "u3tgewi" = "Weight",
+  "u3twhrat" = "Waist-Hip Ratio",
+  "u3tsysmm" = "Systolic Blood Pressure",
+  "u3tdiamm" = "Diastolic Blood Pressure",
+  "u3tglukfastn" = "Fasting Glucose",
+  "u3tgluk2n" = "2 hours Glucose",
+  "u3tinsfastn" = "Fasting Serum Insulin",
+  "u3tins2n" = "2 hours Insulin",
+  "u3thoma2_b" = "HOMA-Beta Cell Function",
+  "u3thoma2_s" = "HOMA Insulin Sensitivity",
+  "u3thoma2_ir" = "HOMA-Insulin Resistance",
+  "u3tquickin" = "Quantitative Insulin Sensitivity Check Index",
+  "u3lk_choln" = "Total Cholesterol",
+  "u3lk_hdln" = "HDL",
+  "u3lk_ldln" = "LDL",
+  "u3lk_trin" = "Fasting Triglyceride",
+  "u3lk_krean" = "Creatinine",
+  "u3l_hbavn" = "Fasting HbA1c Value",
+  "u3h_crp" = "High Sensitivity C-Reactive Protein",
+  "u3tgroe" = "Height",
+  "u3talteru" = "Age at Examination Date"
+)
+
+# Define color palette
+color_palette <- c("red","blue", "lightgreen","purple","#E7B800", "#00AFBB","grey")
+
+# Loop through variables and save plots
+for (var in names(boxplot_vars)) {
+  # Create the boxplot
+  p <- ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = var,
+                 color = "Extreme_Archetype_Number", palette = color_palette,
+                 order = c("1", "2","3","4", "Mixed Etiology"),#adjust the number of archetypes here
+                 ylab = boxplot_vars[[var]], xlab = "Archetype") +
+       theme_minimal() +  # Use minimal theme for better visualization
+       ggtitle(boxplot_vars[[var]]) +  # Add the title
+       theme(plot.title = element_text(hjust = 0.5))  # Center the title
+
+  # Save each plot with a unique filename
+  filename <- paste0("boxplot_", var, ".png")
+  ggsave(filename, plot = p, width = 6, height = 5, dpi = 300, bg = "white")
+}
+
+```
+
+
+
+##Distributation of categorical variable 
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+## Distribution of Metabolic Syndrome based on IDF
+
+# Ensure proper grouping and correct percentage calculation
+summary_data <- Data.soft %>%
+  group_by(Extreme_Archetype_Number, u3tmsidfup) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+summary_data$u3tmsidfup <- factor(summary_data$u3tmsidfup, levels = c(1, 2), 
+                                  labels = c("Metabolic Syndrome", "Controls"))
+# Create the stacked bar plot
+p <- ggplot(summary_data, aes(x = Extreme_Archetype_Number, y = count, fill = factor(u3tmsidfup))) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("red", "#00AFBB", "#E7B800", "blue", "grey", "violet"), 
+                    name = "Metabolic Syndrome (IDF Definition)",
+                    labels = c("Metabolic Syndrome", "Controls")) +
+  labs(x = "Extreme Archetype Number", y = "Count", 
+       title = "Distribution of Metabolic Syndrome Across Archetype Numbers") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 12),  # Rotate x-axis labels for better readability
+    axis.title.x = element_text(face = "bold", size = 12),
+    axis.title.y = element_text(face = "bold", size = 12),
+    legend.position = "top",  # Keep legend on top
+    legend.direction = "horizontal",  # Arrange legend items in a row
+    legend.title = element_text(size = 12, face = "bold"),  # Bold legend title
+    legend.text = element_text(size = 10),  # Adjust legend text size
+    legend.spacing.x = unit(0.5, 'cm')  # Increase spacing between legend items
+  ) +
+  guides(fill = guide_legend(nrow = 2, byrow = TRUE))  # Ensure 2-row legend format
+
+print(p)
+ggsave("barplot_IDF.png", plot = p, width = 6, height = 5, dpi = 300, bg = "white")
+
+dev.off()
+
+#Distribution of sex
+
+# Create a summary of the data
+summary_data <- Data.soft %>%
+  group_by(Extreme_Archetype_Number, u3csex) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Create the stacked bar plot
+p <- ggplot(summary_data, aes(x = Extreme_Archetype_Number, y = count, fill = factor(u3csex))) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("red", "#00AFBB", "#E7B800", "blue", "grey", "violet"), 
+                    name = "Gender",
+                    labels = c("Male", "Female")) +
+  labs(x = "Extreme Archetype Number", y = "Count", 
+       title = "Distribution of Gender across Archetype Numbers") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+  table(Data.soft$u3csex)
+
+print(p)
+
+ggsave("barplot_sex.png", plot = p,width = 6, height = 5, dpi = 300, bg = "white")
+"0 = NORM
+1 = IFG
+2 = IGT
+3 = IFG/IGT
+4 = diabetes newly diagnosed by oGTT
+5 = known type 2 diabetes
+6 = known type 1 diabetes
+7 = known drug-induced diabetes
+8 = unclear, due to missing oGTT information
+9 = unclear, cannot be validated"
+
+summary_data <- Data.soft %>%
+  group_by(Extreme_Archetype_Number, u3tdm110y15) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Create the stacked bar plot
+p <- ggplot(summary_data, aes(x = Extreme_Archetype_Number, y = count, fill = factor(u3tdm110y15))) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("#00AFBB", "#FC4E07", "#E7B800", "blue", "grey"), 
+                    name = "Diabetes classification",
+                    labels = c("Norm", "IFG", "IGT", "IFG/IGT", "diabetes newly diagnosed by oGTT")) +
+  labs(x = "Extreme Archetype Number", y = "Count", 
+       title = "Distribution of Diabetes across  Archetype Numbers") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+ggsave("barplot_diabetes.png", plot = p,width = 6, height = 5, dpi = 300, bg = "white")
+
+table(Data.soft$u3tdm110y15)
+table(Data$u3tdm110y15)
+sum(is.na(Data.soft$u3tdm110y15))
+sum(is.na(Data$u3tdm110y15))
+
+
+dev.off()
+
+
+#Distribution of BMI WHO
+"1 = underweight (< 18.5)
+2 = normal weight (≥ 18.5 - < 25)
+3 = preadipose (≥ 25 - < 30)
+4 = obese, grade 1 (≥ 30 - < 35)
+5 = obese, grade 2 (≥ 35 - < 40)
+6 = obese, grade 3 (≥ 40)"
+
+# Create a summary of the data
+summary_data <- Data.soft %>%
+  group_by(Extreme_Archetype_Number, u3tbmiwho) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Create the stacked bar plot
+p <- ggplot(summary_data, aes(x = Extreme_Archetype_Number, y = count, fill = factor(u3tbmiwho))) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("#00AFBB", "#FC4E07", "#E7B800", "blue", "grey", "violet"), 
+                    name = "BMI WHO",
+                    labels = c("underweight", "normal weight", "preadipose", "obese grade 1", "obese grade 2", "obese grade 3")) +
+  labs(x = "Extreme Archetype Number", y = "Count", 
+       title = "Distribution of BMI WHO across  Archetype Numbers") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+ggsave("barplot_BMI_WHO.png", plot = p,width = 6, height = 5, dpi = 300, bg = "white")
+
+
+
+##Distribution of Hypertention WHO
+"1 = optimal (<120/80 mmHg),
+2 = normal (≥120/80 - <130/85 mmHg),
+3 = high normal (≥130/85 - <140/90 mmHg),
+4 = Hyp.Grad 1 (≥140/90 - <160/100 mmHg),
+5 = Hyp.Grad 2 (≥160/100 - <180/110 mmHg),
+6 = Hyp.Grad 3 (≥180/110 mmHg)"
+
+# Create a summary of the data
+summary_data <- Data.soft %>%
+  group_by(Extreme_Archetype_Number, u3twhoish) %>%
+  summarise(count = n()) %>%
+  mutate(percentage = count / sum(count) * 100)
+
+# Create the stacked bar plot
+p <- ggplot(summary_data, aes(x = Extreme_Archetype_Number, y = count, fill = factor(u3twhoish))) +
+  geom_bar(stat = "identity", position = "stack") +
+  scale_fill_manual(values = c("#00AFBB", "#FC4E07", "#E7B800", "blue", "grey", "violet"), 
+                    name = "Hypertention WHO",
+                    labels = c("optimal", "normal", "high normal", "Hyp.Grad 1", "Hyp.Grad 2" ,"Hyp.Grad 3")) +
+  labs(x = "Extreme Archetype Number", y = "Count", 
+       title = "Distribution of Hypertention WHO across  Archetype Numbers") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 30, hjust = 1))
+ggsave("barplot_Hypertention_WHO.png", plot = p,width = 6, height = 5, dpi = 300, bg = "white")
+
+
+
+
+```
+
+#Violin plot and desnsity plots (excluded)
+```{r}
+library(ggplot2)
+library(ggpubr)
+
+# Define color palette
+color_palette <- c("#00AFBB", "#FC4E07", "#E7B800")
+
+#DENSITY PLOT**: Distribution of Archetypes
+p_density <- ggplot(Data.soft, aes(x = Extreme_Archetype_Number, fill = Extreme_Archetype_Number)) +
+  geom_density(alpha = 0.5) +  
+  scale_fill_manual(values = color_palette) +
+  labs(title = "Density Plot of Extreme Archetypes", x = "Extreme Archetype", y = "Density") +
+  theme_minimal()
+
+print(p_density)
+# Save Density Plot
+ggsave("density_archetypes.png", plot = p_density, width = 6, height = 5, dpi = 300, bg = "white")
+
+
+#VIOLIN PLOT: Distribution of Archetypes with Spread
+p_violin <- ggplot(Data.soft, aes(x = Extreme_Archetype_Number, y = as.numeric(Extreme_Archetype_Number), 
+                                  fill = Extreme_Archetype_Number)) +
+  geom_violin(alpha = 0.7, trim = FALSE) +  
+  scale_fill_manual(values = color_palette) +
+  labs(title = "Violin Plot of Extreme Archetypes", x = "Extreme Archetype", y = "Value") +
+  theme_minimal()
+
+print(p_violin)
+
+# Save Violin Plot
+ggsave("violin_archetypes.png", plot = p_violin, width = 6, height = 5, dpi = 300, bg = "white")
+
+
+
+# Define color palette
+color_palette <- c("#00AFBB", "#FC4E07", "#E7B800")
+
+# 🎻 **Improved Violin Plot (Preserves Mixed Etiology)**
+p_violin <- ggplot(Data.soft, aes(x = as.factor(Extreme_Archetype_Number), y = as.numeric(u3tbmi), 
+                                  fill = as.factor(Extreme_Archetype_Number))) +
+  geom_violin(alpha = 0.7, trim = FALSE) +  # Show full distribution
+  geom_boxplot(width = 0.1, fill = "white", color = "black", outlier.shape = NA) +  # Add boxplot inside violin
+  scale_fill_manual(values = color_palette) +
+  labs(title = "Violin Plot of Extreme Archetypes", x = "Extreme Archetype", y = "BMI") +
+  theme_minimal()
+
+print(p_violin)
+# Save Violin Plot
+ggsave("violin_archetypes_fixed.png", plot = p_violin, width = 6, height = 5, dpi = 300, bg = "white")
+
+
+
+```
+
+
+```{r}
+getwd()
+```
+
+
+
+#Violin Plot 
+```{r}
+
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+#library(ggpubr)
+
+# Define variables and their corresponding y-axis labels
+violin_vars <- list(
+  "u3tbmi" = "BMI",
+  "u3tgewi" = "Weight",
+  "u3twhrat" = "Waist-Hip Ratio",
+  "u3tsysmm" = "Systolic Blood Pressure",
+  "u3tdiamm" = "Diastolic Blood Pressure",
+  "u3tglukfastn" = "Fasting Glucose",
+  "u3tgluk2n" = "2 hours Glucose",
+  "u3tinsfastn" = "Fasting Serum Insulin",
+  "u3thoma2_b" = "HOMA-Beta Cell Function",
+  "u3thoma2_s" = "HOMA Insulin Sensitivity",
+  "u3thoma2_ir" = "HOMA-Insulin Resistance",
+  "u3tquickin" = "Quantitative Insulin Sensitivity Check Index",
+  "u3lk_choln" = "Total Cholesterol",
+  "u3lk_hdln" = "HDL",
+  "u3lk_ldln" = "LDL",
+  "u3lk_trin" = "Fasting Triglyceride",
+  "u3lk_krean" = "Creatinine",
+  "u3l_hbavn" = "Fasting HbA1c Value",
+  "u3h_crp" = "High Sensitivity C-Reactive Protein",
+  "u3tgroe" = "Height",
+  "u3talteru" = "Age at Examination Date"
+)
+
+# Define improved color palette
+color_palette <- c("red","blue", "lightgreen","purple","#E7B800", "#00AFBB","grey")
+
+# Loop through variables and save violin plots
+for (var in names(violin_vars)) {
+  
+  # Generate violin plot
+  p <- ggplot(Data.soft, aes(x = as.factor(Extreme_Archetype_Number), y = get(var), 
+                             fill = as.factor(Extreme_Archetype_Number))) +
+    geom_violin(trim = FALSE, alpha = 0.7) +  # Full distribution
+    geom_boxplot(width = 0.1, fill = "white", color = "black", outlier.shape = NA) +  # Boxplot inside
+    scale_fill_manual(values = color_palette, name =  "Archetypes") +  # Fix legend name
+    labs(title = paste("Violin Plot of", violin_vars[[var]], "Across Archetypes"),
+         x = "Archetypes", y = violin_vars[[var]]) +
+    theme_minimal() +
+    theme(
+      axis.text.x = element_text( angle = 30, vjust = 1, hjust = 1, size = 10),#angle = 45,# Rotate x-axis labels
+      plot.title = element_text(hjust = 0.5, size = 9, face = "bold"),  # Reduce title size
+      legend.title = element_text(size = 10, face = "bold"),  # Adjust legend title size
+      legend.text = element_text(size = 10)  # Adjust legend text size
+    )
+
+  # Save each plot with a unique filename
+  filename <- paste0("violin_", var, ".png")
+  ggsave(filename, plot = p, width = 6, height = 5, dpi = 300, bg = "white")
+}
+
+```
+
+
+#Density Plots (not included )
+```{r}
+# Define continuous variables and their corresponding y-axis labels
+density_vars <- list(
+  "u3tbmi" = "BMI",
+  "u3tgewi" = "Weight",
+  "u3twhrat" = "Waist-Hip Ratio",
+  "u3tsysmm" = "Systolic Blood Pressure",
+  "u3tdiamm" = "Diastolic Blood Pressure",
+  "u3tglukfastn" = "Fasting Glucose",
+  "u3tgluk2n" = "2 hours Glucose",
+  "u3tinsfastn" = "Fasting Serum Insulin",
+  "u3thoma2_b" = "HOMA-Beta Cell Function",
+  "u3thoma2_s" = "HOMA Insulin Sensitivity",
+  "u3thoma2_ir" = "HOMA-Insulin Resistance",
+  "u3tquickin" = "Quantitative Insulin Sensitivity Check Index",
+  "u3lk_choln" = "Total Cholesterol",
+  "u3lk_hdln" = "HDL",
+  "u3lk_ldln" = "LDL",
+  "u3lk_trin" = "Fasting Triglyceride",
+  "u3lk_krean" = "Creatinine",
+  "u3l_hbavn" = "Fasting HbA1c Value",
+  "u3h_crp" = "High Sensitivity C-Reactive Protein",
+  "u3tgroe" = "Height",
+  "u3talteru" = "Age at Examination Date"
+)
+
+# Define color palette
+color_palette <- c("#00AFBB", "#FC4E07", "#E7B800")
+
+# Loop through variables and create density plots
+for (var in names(density_vars)) {
+  
+  # Generate density plot
+  p <- ggplot(Data.soft, aes(x = .data[[var]], fill = as.factor(Extreme_Archetype_Number))) +
+    geom_density(alpha = 0.5, size = 1, adjust = 1.5) +  # Smoother curves
+    scale_fill_manual(values = color_palette) +
+    labs(title = paste("Density Plot of", density_vars[[var]], "Across Archetypes"),
+         x = density_vars[[var]], y = "Density", fill = "Extreme Archetype") +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+      legend.position = "top",  # Move legend to the top
+      legend.justification = "center",  # Correct justification
+      legend.margin = margin(5, 5, 5, 5),  # Adjust margin for visibility
+      axis.text = element_text(size = 10),  # Improve axis text readability
+      axis.title = element_text(size = 13, face = "bold")
+    )
+
+  # Save each plot with a unique filename
+  filename <- paste0("density_", var, ".png")
+  ggsave(filename, plot = p, width = 6, height = 5, dpi = 300, bg = "white")
+}
+
+```
+
+
+##Radar plots
+```{r}
+#load("Data.soft.RData")
+#For saving figures
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+# Rename columns using dplyr
+Data.soft <- Data.soft %>%
+  dplyr::rename(
+    Age = u3talteru, 
+    Gender = u3csex, 
+    Weight = u3tgewi, 
+    Height = u3tgroe, 
+    BMI = u3tbmi,
+    WHO_BMI_Category = u3tbmiwho,  
+    WHR = u3twhrat,  
+    WHR_Category = u3twhratc, 
+    SBP = u3tsysmm, 
+    DBP = u3tdiamm, 
+    Hypertension = u3twhoish,  
+    Fasting_glucose = u3tglukfastn,  
+    Glucose_2h = u3tgluk2n,  
+    Diabetes_WHO = u3tdm110y15,  
+    Fasting_insulin = u3tinsfastn,  
+    Insulin_2h = u3tins2n,  
+    Metabolic_Syndrome_IDF = u3tmsidfup,  
+    HOMA_Beta = u3thoma2_b,  
+    HOMA_Sensitivity = u3thoma2_s,  
+    HOMA_IR = u3thoma2_ir,  
+    Insulin_Sensitivity_Quicki = u3tquickin,
+    Cholesterol = u3lk_choln,  
+    HDL = u3lk_hdln, 
+    LDL = u3lk_ldln,  
+    TG = u3lk_trin, 
+    Creatinine = u3lk_krean, 
+    HbA1c = u3l_hbavn,   
+    hsCRP = u3h_crp
+  )
+##Excluding the categorical variables
+Data.soft <- Data.soft[, !names(Data.soft) %in% c("Gender", "Metabolic_Syndrome_IDF","WHO_BMI_Category", "WHR_Category", "Diabetes_WHO","Hypertension")]
+
+# Load necessary library
+#install.packages("fmsb")
+library(fmsb)
+
+# Calculate the mean values of each variable for each archetype
+archetype_means <- aggregate(. ~ Extreme_Archetype_Number, data = Data.soft, FUN = mean)
+
+# Remove the "Extreme_Archetype_Number" column for radar plot
+archetype_means_data <- archetype_means[, -1]
+
+# Set max and min values for scaling (same for all archetypes)
+max_values <- apply(archetype_means_data, 2, max)
+min_values <- apply(archetype_means_data, 2, min)
+
+# Add the max and min as the first two rows
+radar_data <- rbind(max_values, min_values, archetype_means_data)
+
+# Loop to create separate radar plots for each archetype
+for (i in 3:nrow(radar_data)) {
+  # File name for each radar plot
+  file_name <- paste0("Radar_Plot_Archetype_", archetype_means$Extreme_Archetype_Number[i - 2], ".png")
+  
+  # Save each radar plot as a separate image
+  png(file = file_name, width = 800, height = 800)
+  
+  radarchart(radar_data[c(1, 2, i), ], 
+             axistype = 1, 
+             title = paste("Radar Plot for Archetype", archetype_means$Extreme_Archetype_Number[i - 2]),
+             pcol = "blue",
+             pfcol = rgb(0.2,0.5,0.5,0.3),
+             plwd = 2,
+             cglcol = "grey", 
+             cglty = 1, 
+             axislabcol = "grey", 
+             caxislabels = seq(0, 1, 0.2), 
+             calcex = 0.8)
+  
+  dev.off()  # Close the image file
+}
+
+
+# Calculate the mean values of each variable for each archetype
+archetype_means <- aggregate(. ~ Extreme_Archetype_Number, data = Data.soft, FUN = mean)
+
+# Filter the row for "Mixed Etiology" (not numeric archetypes)
+mixed_etiology_data <- archetype_means[archetype_means$Extreme_Archetype_Number == "Mixed Etiology", -1]
+
+# Set max and min values for scaling (same for all variables)
+max_values <- apply(Data.soft[, -which(names(Data.soft) == "Extreme_Archetype_Number")], 2, max)
+min_values <- apply(Data.soft[, -which(names(Data.soft) == "Extreme_Archetype_Number")], 2, min)
+
+# Combine max, min, and mixed etiology data for radar plot
+radar_data <- rbind(max_values, min_values, mixed_etiology_data)
+
+# Radar Plot for Mixed Etiology
+png(file = "Mixed_Etiology_Radar_Plot.png", width = 800, height = 800)
+radarchart(radar_data, 
+           axistype = 1, 
+           title = "Radar Plot for Mixed Etiology",
+           pcol = "blue",
+           pfcol = rgb(0.2,0.5,0.5,0.3),
+           plwd = 2,
+           cglcol = "grey", 
+           cglty = 1, 
+           axislabcol = "grey", 
+           caxislabels = seq(0, 1, 0.2), 
+           calcex = 0.8)
+dev.off()
+getwd()
+```
+
+#Revised radar plot all archetypes in one page 
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+# Rename columns using dplyr
+Data.soft <- Data.soft %>%
+  dplyr::rename(
+    Age = u3talteru, 
+    Gender = u3csex, 
+    Weight = u3tgewi, 
+    Height = u3tgroe, 
+    BMI = u3tbmi,
+    WHO_BMI_Category = u3tbmiwho,  
+    WHR = u3twhrat,  
+    WHR_Category = u3twhratc, 
+    SBP = u3tsysmm, 
+    DBP = u3tdiamm, 
+    Hypertension = u3twhoish,  
+    Fasting_glucose = u3tglukfastn,  
+    Glucose_2h = u3tgluk2n,  
+    Diabetes_WHO = u3tdm110y15,  
+    Fasting_insulin = u3tinsfastn,  
+    Insulin_2h = u3tins2n,  
+    Metabolic_Syndrome_IDF = u3tmsidfup,  
+    HOMA_B = u3thoma2_b,  
+    HOMA_S = u3thoma2_s,  
+    HOMA_IR = u3thoma2_ir,  
+    Insulin_Sensitivity_Quicki = u3tquickin,
+    Cholesterol = u3lk_choln,  
+    HDL = u3lk_hdln, 
+    LDL = u3lk_ldln,  
+    TG = u3lk_trin, 
+    Creatinine = u3lk_krean, 
+    HbA1c = u3l_hbavn,   
+    hsCRP = u3h_crp
+  )
+setwd(Sys.getenv("KORA_RUN_DIR"))
+##Excluding the categorical variables
+Data.soft <- Data.soft[, !names(Data.soft) %in% c("Gender", "Metabolic_Syndrome_IDF","WHO_BMI_Category", "WHR_Category", "Diabetes_WHO","Hypertension")]
+
+# Load necessary library
+#install.packages("fmsb")
+library(fmsb)
+
+
+# Aggregate means per archetype
+archetype_means <- aggregate(. ~ Extreme_Archetype_Number, data = Data.soft, FUN = mean)
+
+# Extract archetype labels and mean data
+archetype_labels <- archetype_means$Extreme_Archetype_Number
+archetype_means_data <- archetype_means[, -1]
+
+# Define max and min for radar scaling
+max_values <- apply(archetype_means_data, 2, max)
+min_values <- apply(archetype_means_data, 2, min)
+
+# Save all plots in one high-resolution image
+pdf("All_Radar_Plots_HighRes2.pdf", width = 10, height = 8)
+# Configure multi-panel layout
+n <- nrow(archetype_means_data)
+par(mfrow = c(2, 3), mar = c(1, 1, 2, 1), font.axis = 1)  # font.axis = 1 => plain
+
+# Loop over archetypes
+for (i in 1:n) {
+  radar_data <- rbind(max_values, min_values, archetype_means_data[i, ])
+  
+  # Fix title label for "Mixed Etiology"
+  plot_title <- ifelse(tolower(archetype_labels[i]) == "mixed etiology", 
+                       "Mixed etiology", 
+                       paste("Archetype", archetype_labels[i]))
+  
+  radarchart(radar_data, 
+             axistype = 1, 
+             title = plot_title,
+             pcol = "blue",
+             pfcol = rgb(0.2, 0.5, 0.5, 0.3),
+             plwd = 2,
+             cglcol = "grey", 
+             cglty = 1, 
+             axislabcol = "grey", 
+             caxislabels = seq(0, 1, 0.2), 
+             calcex = 3,    # Axis text size
+             vlcex = 0.8,      # Variable label text size (prevents overlap)
+             cex.main = 2,  # 🔼 Title size
+             font.main = 2,    # 🔥 Bold title
+             titlecex = 2)  # Increased font size for the title
+}
+
+dev.off()
+getwd()
+```
+
+
+
+```{r}
+# Load necessary library
+#install.packages("fmsb")
+library(fmsb)
+
+# Calculate the mean values of each variable for each archetype
+archetype_means <- aggregate(. ~ Extreme_Archetype_Number, data = Data.soft, FUN = mean)
+
+# Set max and min values for scaling (same for all variables)
+max_values <- apply(Data.soft[, -which(names(Data.soft) == "Extreme_Archetype_Number")], 2, max)
+min_values <- apply(Data.soft[, -which(names(Data.soft) == "Extreme_Archetype_Number")], 2, min)
+png(file = "All_Mixed_Etiology_Radar_Plots.png", width = 1600, height = 800)
+par(mfrow = c(2, 3))  # Arrange in 2 rows, 3 columns
+
+# Plot for Mixed Etiology
+mixed_etiology_data <- archetype_means[archetype_means$Extreme_Archetype_Number == "Mixed Etiology", -1]
+radar_data <- rbind(max_values, min_values, mixed_etiology_data)
+radarchart(radar_data, 
+           axistype = 1, 
+           title = "Mixed Etiology",
+           pcol = "blue",
+           pfcol = rgb(0.2,0.5,0.5,0.3),
+           plwd = 2)
+archetype_1_data <- archetype_means[archetype_means$Extreme_Archetype_Number == "1", -1]
+radar_data <- rbind(max_values, min_values, archetype_1_data)
+radarchart(radar_data, 
+           axistype = 1, 
+           title = "Archetype 1",
+           pcol = "red",
+           pfcol = rgb(0.5,0.2,0.2,0.3),
+           plwd = 2)
+archetype_2_data <- archetype_means[archetype_means$Extreme_Archetype_Number == "2", -1]
+radar_data <- rbind(max_values, min_values, archetype_2_data)
+radarchart(radar_data, 
+           axistype = 1, 
+           title = "Archetype 2",
+           pcol = "green",
+           pfcol = rgb(0.2,0.5,0.2,0.3),
+           plwd = 2)
+archetype_3_data <- archetype_means[archetype_means$Extreme_Archetype_Number == "3", -1]
+radar_data <- rbind(max_values, min_values, archetype_3_data)
+radarchart(radar_data, 
+           axistype = 1, 
+           title = "Archetype 3",
+           pcol = "purple",
+           pfcol = rgb(0.5,0.2,0.5,0.3),
+           plwd = 2)
+archetype_4_data <- archetype_means[archetype_means$Extreme_Archetype_Number == "4", -1]
+radar_data <- rbind(max_values, min_values, archetype_4_data)
+radarchart(radar_data, 
+           axistype = 1, 
+           title = "Archetype 4",
+           pcol = "orange",
+           pfcol = rgb(0.8,0.5,0.2,0.3),
+           plwd = 2)
+
+dev.off()  # Close the plotting area
+
+```
+
+##Radar plots for all archetypes (this was used for paper)
+```{r}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+# Rename columns using dplyr
+Data.soft <- Data.soft %>%
+  dplyr::rename(
+    Age = u3talteru, 
+    Gender = u3csex, 
+    Weight = u3tgewi, 
+    Height = u3tgroe, 
+    BMI = u3tbmi,
+    WHO_BMI_Category = u3tbmiwho,  
+    WHR = u3twhrat,  
+    WHR_Category = u3twhratc, 
+    SBP = u3tsysmm, 
+    DBP = u3tdiamm, 
+    Hypertension = u3twhoish,  
+    Fasting_glucose = u3tglukfastn,  
+    Glucose_2h = u3tgluk2n,  
+    Diabetes_WHO = u3tdm110y15,  
+    Fasting_insulin = u3tinsfastn,  
+    Insulin_2h = u3tins2n,  
+    Metabolic_Syndrome_IDF = u3tmsidfup,  
+    HOMA_B = u3thoma2_b,  
+    HOMA_S = u3thoma2_s,  
+    HOMA_IR = u3thoma2_ir,  
+    Insulin_Sensitivity_Quicki = u3tquickin,
+    Cholesterol = u3lk_choln,  
+    HDL = u3lk_hdln, 
+    LDL = u3lk_ldln,  
+    TG = u3lk_trin, 
+    Creatinine = u3lk_krean, 
+    HbA1c = u3l_hbavn,   
+    hsCRP = u3h_crp
+  )
+setwd(Sys.getenv("KORA_RUN_DIR"))
+
+## Excluding the categorical variables
+Data.soft <- Data.soft[, !names(Data.soft) %in% c("Gender", "Metabolic_Syndrome_IDF","WHO_BMI_Category", "WHR_Category", "Diabetes_WHO","Hypertension")]
+
+# Load necessary library
+library(fmsb)
+
+# Aggregate means per archetype
+archetype_means <- aggregate(. ~ Extreme_Archetype_Number, data = Data.soft, FUN = mean)
+
+# Extract archetype labels and mean data
+archetype_labels <- archetype_means$Extreme_Archetype_Number
+archetype_means_data <- archetype_means[, -1]
+
+# Define max and min for radar scaling
+max_values <- apply(archetype_means_data, 2, max)
+min_values <- apply(archetype_means_data, 2, min)
+for (i in 1:nrow(archetype_means_data)) {
+  # Create filename for each archetype
+  filename <- paste0("Radar_Plot_Archetype_", archetype_labels[i], ".pdf")
+  
+  # Start PDF device for individual plot
+  pdf(filename, width = 8, height = 8)
+  
+  # Set margins for single plot
+  par(mar = c(1, 1, 3, 1), font.axis = 1)
+  
+  # Prepare radar data for this archetype
+  radar_data <- rbind(max_values, min_values, archetype_means_data[i, ])
+  
+  # Fix title label for "Mixed Etiology"
+  plot_title <- ifelse(tolower(archetype_labels[i]) == "mixed etiology", 
+                       "Mixed etiology", 
+                       paste("Archetype", archetype_labels[i]))
+  
+  # Create radar chart
+  radarchart(radar_data, 
+             axistype = 1, 
+             title = plot_title,
+             pcol = "blue",
+             pfcol = rgb(0.2, 0.5, 0.5, 0.3),
+             plwd = 2,
+             cglcol = "grey", 
+             cglty = 1, 
+             axislabcol = "grey", 
+             caxislabels = seq(0, 1, 0.2), 
+             calcex = 0.8,    # Axis text size
+             vlcex = 1.1,   # Variable label text size
+             cex.main = 1.5,  # Title size
+             font.main = 2,   # Bold title
+             titlecex = 1.5)  # Title size
+  
+  # Close PDF device
+  dev.off()
+  
+  cat("Created:", filename, "\n")
+}
+setwd(Sys.getenv("KORA_RUN_DIR"))
+for (i in 1:nrow(archetype_means_data)) {
+  filename <- paste0("Radar_Plot_Archetype_", archetype_labels[i], ".png")
+  
+  png(filename, width = 8, height = 8,  units = "in", res = 600)
+  par(mar = c(1, 1, 3, 1), font.axis = 1)
+  
+  radar_data <- rbind(max_values, min_values, archetype_means_data[i, ])
+  
+  plot_title <- ifelse(tolower(archetype_labels[i]) == "mixed etiology", 
+                       "Mixed etiology", 
+                       paste("Archetype", archetype_labels[i]))
+  
+  radarchart(radar_data, 
+             axistype = 1, 
+             title = plot_title,
+             pcol = "blue",
+             pfcol = rgb(0.2, 0.5, 0.5, 0.3),
+             plwd = 2,
+             cglcol = "grey", 
+             cglty = 1, 
+             axislabcol = "grey", 
+             caxislabels = seq(0, 1, 0.2), 
+             calcex = 0.8,
+             vlcex = 1.2,
+             cex.main = 1.5,
+             font.main = 2,
+             titlecex = 1.5)
+  
+  dev.off()
+  cat("Created:", filename, "\n")
+}
+pdf("All_Archetypes_Separate_Pages.pdf", width = 10, height = 8)
+
+for (i in 1:nrow(archetype_means_data)) {
+  par(mar = c(1, 1, 3, 1), font.axis = 1)
+  
+  radar_data <- rbind(max_values, min_values, archetype_means_data[i, ])
+  
+  plot_title <- ifelse(tolower(archetype_labels[i]) == "mixed etiology", 
+                       "Mixed etiology", 
+                       paste("Archetype", archetype_labels[i]))
+  
+  radarchart(radar_data, 
+             axistype = 1, 
+             title = plot_title,
+             pcol = "blue",
+             pfcol = rgb(0.2, 0.5, 0.5, 0.3),
+             plwd = 2,
+             cglcol = "grey", 
+             cglty = 1, 
+             axislabcol = "grey", 
+             caxislabels = seq(0, 1, 0.2), 
+             calcex = 0.8,
+             vlcex = 1.1,#larger values
+             cex.main = 1.5,
+             font.main = 2)
+}
+
+dev.off()
+cat("Created: All_Archetypes_Separate_Pages.pdf\n")
+```
+
+
+#Statistical analysis 
+
+##Linear Regression
+```{r}
+# Define phenotypes
+phenotypes <- setdiff(names(Data.soft), c("Extreme_Archetype_Number"))
+
+# Function to run linear regression for each phenotype
+run_regression <- function(phenotype) {
+  formula <- as.formula(paste(phenotype, "~ Extreme_Archetype_Number"))
+  model <- tryCatch({
+    lm(formula, data = Data.soft)
+  }, error = function(e) {
+    message("Error in regression for ", phenotype, ": ", e$message)
+    return(NULL)
+  })
+  
+  if (!is.null(model)) {
+    tidy_result <- tryCatch({
+      tidy(model, conf.int = TRUE)
+    }, error = function(e) {
+      message("Error in tidy for ", phenotype, ": ", e$message)
+      return(NULL)
+    })
+    
+    if (!is.null(tidy_result)) {
+      tidy_result$phenotype <- phenotype
+      return(tidy_result)
+    }
+  }
+  return(NULL)
+}
+
+# Run regression for all phenotypes
+results <- do.call(rbind, lapply(phenotypes, run_regression))
+
+
+# Add adjusted p-values
+results$p.adjusted <- p.adjust(results$p.value, method = "bonferroni")
+
+# Sort results
+results <- results %>%
+  arrange(phenotype, p.value) %>%
+  select(phenotype, term, estimate, std.error, statistic, p.value, p.adjusted, conf.low, conf.high)
+
+# View results
+print(results)
+
+# Save results to CSV
+write.csv(results, "linear_regression_results.csv", row.names = FALSE)
+
+# Function to create boxplot for each phenotype
+create_boxplot <- function(phenotype) {
+  ggboxplot(Data.soft, x = "Extreme_Archetype_Number", y = phenotype,
+            color = "Extreme_Archetype_Number", palette = c("#00AFBB","#FC4E07","#E7B800"),
+            order = c("Mixed Etiology", "1", "2"),
+            ylab = phenotype, xlab = "Archetype") +
+    stat_compare_means(method = "anova")
+}
+
+
+# Create and save boxplots for each phenotype
+for (phenotype in phenotypes) {
+  plot <- create_boxplot(phenotype)
+  ggsave(paste0("boxplot_", phenotype, ".png"), plot, width = 10, height = 6)
+}
+
+# Summary of significant associations
+significant_results <- results %>%
+  filter(p.adjusted < 0.05) %>%
+  arrange(p.adjusted)
+
+print(significant_results)
+write.csv(significant_results,"Regression_results.csv", row.names = FALSE)
+
+
+##
+```
+
+
+##Wilcoxon Test 
+```{r}
+# Initialize results data frame for Wilcoxon tests
+wilcox_results <- data.frame(variable = character(), p_value = numeric(), statistic = numeric(), stringsAsFactors = FALSE)
+
+# Loop through each variable in Data.soft except 'assignments' and 'group'
+for (var in colnames(Data.soft)[!colnames(Data.soft) %in% c("Extreme_Archetype_Number")]) {
+  # Perform Wilcoxon test
+  test_result <- wilcox.test(Data.soft[[var]] ~ Data.soft$Extreme_Archetype_Number, 
+                             exact = FALSE, alternative = "two.sided")
+  
+  # Store results in the data frame
+  wilcox_results <- rbind(wilcox_results, 
+                          data.frame(variable = var, 
+                                     p_value = test_result$p.value, 
+                                     statistic = test_result$statistic))
+}
+
+# View Wilcoxon test results
+print(wilcox_results)
+
+write.csv(wilcox_results, "wilcox_results.csv", row.names = FALSE)
+```
+
+##Kruskal-Wallis test
+
+##For comparing more than two groups Kruskal-Wallis test is used 
+##Kruskal-Wallis test by rank is a non-parametric alternative to one-way ANOVA test, which extends the two-samples Wilcoxon test in the situation where there are more than two groups. It’s recommended when the assumptions of one-way ANOVA test are not met
+#Performing for the whole data together If the archetypes are 
+
+```{r}
+# Show the group levels
+levels(Data.soft$Extreme_Archetype_Number)
+
+#Defining phenotype
+phenotypes <- Data.soft[, setdiff(names(Data.soft), c("Extreme_Archetype_Number"))]
+
+# Perform Kruskal-Wallis tests
+kruskal_test <- function(phenotype) {
+  test_result <- kruskal.test(phenotype ~ Extreme_Archetype_Number, data = Data.soft)
+  return(c(statistic = test_result$statistic, p.value = test_result$p.value))
+}
+
+# Apply the function to each phenotype
+results <- sapply(phenotypes, kruskal_test)
+
+# Convert results to a data frame
+results_df <- as.data.frame(t(results))
+results_df$phenotype <- rownames(results_df)
+rownames(results_df) <- NULL
+
+# Add adjusted p-values
+results_df$p.adjusted <- p.adjust(results_df$p.value, method = "bonferroni")
+
+# Sort results by p-value
+results_df <- results_df[order(results_df$p.value), ]
+
+# View the results
+print(results_df)
+
+# Optionally, save the results
+write.csv(results_df, "kruskal_wallis_results.csv", row.names = FALSE)
+
+```
+
+```{r}
+sessionInfo()
+```
+

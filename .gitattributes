@@ -1,0 +1,5 @@
+*.R text eol=lf
+*.Rmd text eol=lf
+*.md text eol=lf
+*.ps1 text eol=lf
+*.yml text eol=lf
