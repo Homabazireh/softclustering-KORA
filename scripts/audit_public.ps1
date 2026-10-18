@@ -3,7 +3,7 @@ $repo = (& git rev-parse --show-toplevel)
 if ($LASTEXITCODE -ne 0) { throw 'Run from the public Git repository.' }
 $repo = [IO.Path]::GetFullPath($repo)
 function Assert-PublicPath([string]$path) {
-    $allowed = $path -match '^(code/[^/]+/[^/]+\.Rmd|scripts/[^/]+\.(R|ps1)|docs/[^/]+\.md|\.github/workflows/[^/]+\.yml|README\.md|\.gitignore|\.gitattributes|softclustering-KORA\.Rproj)$'
+    $allowed = $path -match '^(code/[^/]+/[^/]+\.Rmd|scripts/[^/]+\.(R|ps1)|docs/[^/]+\.md|manuscript/[^/]+\.md|\.github/workflows/[^/]+\.yml|README\.md|\.gitignore|\.gitattributes|softclustering-KORA\.Rproj)$'
     if (!$allowed) { throw ('Non-source path in Git history or index: ' + $path) }
 }
 foreach ($path in (& git ls-files)) { Assert-PublicPath $path }

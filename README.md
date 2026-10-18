@@ -2,6 +2,8 @@
 
 Public analysis code for clinical variables, proteomics, metabolomics, and their integration. Study data, participant identifiers, model objects, results, and reports are kept in separate private storage.
 
+Code is grouped under `code/clinical/`, `code/proteomics/`, `code/metabolomics/`, and `code/multiomics/`. Supporting instructions are in `docs/`; `manuscript/` is reserved for public manuscript material.
+
 ## 1. Get the code and software
 
 Clone this repository and open `softclustering-KORA.Rproj`, or open a terminal in its root folder.
@@ -64,7 +66,7 @@ The clinical filenames are restored exactly:
 3. `code/proteomics/whole_population.Rmd` and `code/metabolomics/whole_population.Rmd` — merge preprocessed omics with clinical variables and archetype assignments.
 4. `code/proteomics/mets_regression.Rmd` and `code/metabolomics/mets_regression.Rmd` — MetS-subset regressions.
 5. `code/metabolomics/mets_group_analysis.Rmd`, then `code/proteomics/mets_group_analysis.Rmd` — group comparisons and prediction. Proteomics consumes the metabolomics grouping output.
-6. `code/multiomics/mixed_etiology.Rmd` — mixed etiology comparisons; `code/multiomics/mofa_diablo_mets.Rmd` — integration after both group workflows.
+6. `code/clinical/Dive_in_MixedEtiology.Rmd` — mixed etiology comparisons, kept in the clinical section under its original filename; `code/multiomics/mofa_diablo_mets.Rmd` — integration after both group workflows.
 
 Run each notebook with the private runner, quoting its path:
 
